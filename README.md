@@ -50,9 +50,9 @@ dataset
 └── textless
 ```
 ### モデルの学習方法
-1. 下記リンクより、「G_232000.pth」「D_232000.pth」をダウンロード。
-https://drive.google.com/drive/u/8/folders/1ZZ1tTPuXtwWZugJiMCAjvlz-xPdLQV6M
-2. 「G_232000.pth」「D_232000.pth」をfine_modelに移動。
+1. 下記リンクより、「G_270000.pth」「D_270000.pth」をダウンロード。
+https://drive.google.com/drive/folders/1q61Cw0UOcxaTAn0gJCRny3GC59x2C5eZ?usp=sharing
+2. 「G_270000.pth」「D_270000.pth」をfine_modelに移動。
 3. notebookディレクトリにある「Create_Configfile.ipynb」をgoogle colab 上で実行、学習に必要なconfigファイルを作成
 4. 学習したコンフィグファイル(json)の
  
