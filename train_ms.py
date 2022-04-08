@@ -69,7 +69,7 @@ def run(rank, n_gpus, hps):
   train_sampler = DistributedBucketSampler(
       train_dataset,
       hps.train.batch_size,
-      [32,500,600,700,800,900,1000,1100,1200],
+      [64,500,600,700,800,900,1000,1100,1200],
       num_replicas=n_gpus,
       rank=rank,
       shuffle=True)
@@ -244,11 +244,46 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 def evaluate(hps, generator, eval_loader, writer_eval):
     generator.eval()
     with torch.no_grad():
-      for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths, speakers) in enumerate(eval_loader):
+      for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths, speakers) in enumerate(tqdm(eval_loader, desc="eval Epoch")):
         x, x_lengths = x.cuda(0), x_lengths.cuda(0)
         spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
         y, y_lengths = y.cuda(0), y_lengths.cuda(0)
         speakers = speakers.cuda(0)
+
+        with autocast(enabled=hps.train.fp16_run):
+          y_hat, l_length, attn, ids_slice, x_mask, z_mask,\
+          (z, z_p, m_p, logs_p, m_q, logs_q) = generator(x, x_lengths, spec, spec_lengths, speakers)
+
+          mel = spec_to_mel_torch(
+              spec, 
+              hps.data.filter_length, 
+              hps.data.n_mel_channels, 
+              hps.data.sampling_rate,
+              hps.data.mel_fmin, 
+              hps.data.mel_fmax)
+          y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
+          y_hat_mel = mel_spectrogram_torch(
+              y_hat.squeeze(1), 
+              hps.data.filter_length, 
+              hps.data.n_mel_channels, 
+              hps.data.sampling_rate, 
+              hps.data.hop_length, 
+              hps.data.win_length, 
+              hps.data.mel_fmin, 
+              hps.data.mel_fmax
+          )
+
+          y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size) # slice 
+
+        with autocast(enabled=hps.train.fp16_run):
+          with autocast(enabled=False):
+            loss_dur = torch.sum(l_length.float())
+            loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
+            loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+
+
+        scalar_dict = {}
+        scalar_dict.update({"loss/g/mel": loss_mel, "loss/g/dur": loss_dur, "loss/g/kl": loss_kl})
 
         # remove else
         x = x[:1]
@@ -258,7 +293,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
         y = y[:1]
         y_lengths = y_lengths[:1]
         speakers = speakers[:1]
-        break
+
       y_hat, attn, mask, *_ = generator.module.infer(x, x_lengths, speakers, max_len=1000)
       y_hat_lengths = mask.sum([1,2]).long() * hps.data.hop_length
 
@@ -293,6 +328,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
       writer=writer_eval,
       global_step=global_step, 
       images=image_dict,
+      scalars=scalar_dict,
       audios=audio_dict,
       audio_sampling_rate=hps.data.sampling_rate
     )
