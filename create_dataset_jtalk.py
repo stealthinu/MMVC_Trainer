@@ -37,8 +37,8 @@ def create_dataset(filename):
     output_file_list_textless = list()
     output_file_list_val_textless = list()
     for d in textful_dir_list:
-        wav_file_list = glob.glob(d+"/wav/*")
-        lab_file_list = glob.glob(d + "/text/*")
+        wav_file_list = glob.glob(d+"/wav/*.wav")
+        lab_file_list = glob.glob(d + "/text/*.txt")
         wav_file_list.sort()
         lab_file_list.sort()
         if len(wav_file_list) == 0:
@@ -60,7 +60,7 @@ def create_dataset(filename):
         speaker_id = speaker_id + 1
 
     for d in textless_dir_list:
-        wav_file_list = glob.glob(d+"/*")
+        wav_file_list = glob.glob(d+"/*.wav")
         wav_file_list.sort()
         counter = 0
         for wav in wav_file_list:
