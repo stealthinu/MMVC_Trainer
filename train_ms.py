@@ -290,14 +290,18 @@ def evaluate(hps, generator, eval_loader, writer_eval):
         scalar_dict["loss/g/dur"] = scalar_dict["loss/g/dur"] + loss_dur
         scalar_dict["loss/g/kl"] = scalar_dict["loss/g/kl"] + loss_kl
       
-      print(batch_num)
-      #lossをepochのiter単位の平均値に
+      #lossをepoch1周の結果をiter単位の平均値に
       scalar_dict["loss/g/mel"] = scalar_dict["loss/g/mel"] / (batch_num+1)
       scalar_dict["loss/g/dur"] = scalar_dict["loss/g/dur"] / (batch_num+1)
       scalar_dict["loss/g/kl"] = scalar_dict["loss/g/kl"] / (batch_num+1)
 
       #謎の処理
       for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths, speakers) in enumerate(eval_loader):
+        x, x_lengths = x.cuda(0), x_lengths.cuda(0)
+        spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
+        y, y_lengths = y.cuda(0), y_lengths.cuda(0)
+        speakers = speakers.cuda(0)
+
         # remove else
         x = x[:1]
         x_lengths = x_lengths[:1]
