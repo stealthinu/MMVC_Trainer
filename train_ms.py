@@ -243,14 +243,18 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
  
 def evaluate(hps, generator, eval_loader, writer_eval):
     generator.eval()
+    scalar_dict = {}
+    scalar_dict.update({"loss/g/mel": 0.0, "loss/g/dur": 0.0, "loss/g/kl": 0.0})
     with torch.no_grad():
-      for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths, speakers) in enumerate(tqdm(eval_loader, desc="eval Epoch")):
+      #evalのデータセットを一周する
+      for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths, speakers) in enumerate(tqdm(eval_loader, desc="Epoch {}".format("eval"))):
         x, x_lengths = x.cuda(0), x_lengths.cuda(0)
         spec, spec_lengths = spec.cuda(0), spec_lengths.cuda(0)
         y, y_lengths = y.cuda(0), y_lengths.cuda(0)
         speakers = speakers.cuda(0)
-
+        #autocastはfp16のおまじない
         with autocast(enabled=hps.train.fp16_run):
+          #Generator
           y_hat, l_length, attn, ids_slice, x_mask, z_mask,\
           (z, z_p, m_p, logs_p, m_q, logs_q) = generator(x, x_lengths, spec, spec_lengths, speakers)
 
@@ -272,6 +276,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
               hps.data.mel_fmin, 
               hps.data.mel_fmax
           )
+          batch_num = batch_idx
 
           y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size) # slice 
 
@@ -281,10 +286,18 @@ def evaluate(hps, generator, eval_loader, writer_eval):
             loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
             loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
 
+        scalar_dict["loss/g/mel"] = scalar_dict["loss/g/mel"] + loss_mel
+        scalar_dict["loss/g/dur"] = scalar_dict["loss/g/dur"] + loss_dur
+        scalar_dict["loss/g/kl"] = scalar_dict["loss/g/kl"] + loss_kl
+      
+      print(batch_num)
+      #lossをepochのiter単位の平均値に
+      scalar_dict["loss/g/mel"] = scalar_dict["loss/g/mel"] / (batch_num+1)
+      scalar_dict["loss/g/dur"] = scalar_dict["loss/g/dur"] / (batch_num+1)
+      scalar_dict["loss/g/kl"] = scalar_dict["loss/g/kl"] / (batch_num+1)
 
-        scalar_dict = {}
-        scalar_dict.update({"loss/g/mel": loss_mel, "loss/g/dur": loss_dur, "loss/g/kl": loss_kl})
-
+      #謎の処理
+      for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths, speakers) in enumerate(eval_loader):
         # remove else
         x = x[:1]
         x_lengths = x_lengths[:1]
@@ -293,6 +306,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
         y = y[:1]
         y_lengths = y_lengths[:1]
         speakers = speakers[:1]
+        break
 
       y_hat, attn, mask, *_ = generator.module.infer(x, x_lengths, speakers, max_len=1000)
       y_hat_lengths = mask.sum([1,2]).long() * hps.data.hop_length
