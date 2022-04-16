@@ -265,12 +265,14 @@ class Generator(torch.nn.Module):
         self.ups.apply(init_weights)
 
         if gin_channels != 0:
-            self.cond = nn.Conv1d(gin_channels, upsample_initial_channel, 1)
+            #self.cond = nn.Conv1d(gin_channels, upsample_initial_channel, 1)
+            gin_channels = 0
 
     def forward(self, x, g=None):
         x = self.conv_pre(x)
         if g is not None:
-          x = x + self.cond(g)
+          #x = x + self.cond(g)
+          g = None
 
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, modules.LRELU_SLOPE)
@@ -456,16 +458,20 @@ class SynthesizerTrn(nn.Module):
     if n_speakers > 1:
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
-  def forward(self, x, x_lengths, y, y_lengths, sid=None):
+  def forward(self, x, x_lengths, y, y_lengths, sid=None, tgt_sid=None):
 
     x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
+      t = self.emb_g(tgt_sid).unsqueeze(-1) # [b, h, 1]
     else:
       g = None
 
     z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
     z_p = self.flow(z, y_mask, g=g)
+    z_q = self.flow(z_p, y_mask, g=t, reverse=True)
+    z_p_hat = self.flow(z_q, y_mask, g=t)
+    z_q_hat = self.flow(z_p_hat, y_mask, g=g, reverse=True)
 
     with torch.no_grad():
       # negative cross-entropy
@@ -494,7 +500,10 @@ class SynthesizerTrn(nn.Module):
 
     z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
-    return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
+    cycle_z_slice = commons.slice_segments(z_q_hat, ids_slice, self.segment_size)
+    cycle_o = self.dec(cycle_z_slice, g=g)
+
+    return o, l_length, attn, ids_slice, x_mask, y_mask, cycle_o, z, z_q_hat, z_p_hat (z, z_p, m_p, logs_p, m_q, logs_q)
 
   def infer(self, x, x_lengths, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None):
     x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
@@ -524,7 +533,8 @@ class SynthesizerTrn(nn.Module):
 
   def voice_conversion(self, y, y_lengths, sid_src, sid_tgt):
     assert self.n_speakers > 0, "n_speakers have to be larger than 0."
-    g_src = self.emb_g(sid_src).unsqueeze(-1)
+    g_src = self.emb_g(sid_src).unsqueeze(-1)# [b, h, 1]
+    print(g_src.shape)
     g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
     z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src)
     z_p = self.flow(z, y_mask, g=g_src)
@@ -532,3 +542,18 @@ class SynthesizerTrn(nn.Module):
     o_hat = self.dec(z_hat * y_mask, g=g_tgt)
     return o_hat, y_mask, (z, z_p, z_hat)
 
+  #src -> tgt -> ^srcのサイクル変換
+  #srcのspecと^srcのspecを返す
+  #tgtの入れ方検討
+  def cycle_conversion(self, y, y_lengths, sid_src, sid_tgt):
+      assert self.n_speakers > 0, "n_speakers have to be larger than 0."
+      g_src = self.emb_g(sid_src).unsqueeze(-1)# [b, h, 1]
+      g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
+      z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src)
+      z_p = self.flow(z, y_mask, g=g_src)
+      z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
+
+      z_p_hat = self.flow(z_hat, y_mask, g=g_tgt)
+      z_hat_hat = self.flow(z_p_hat, y_mask, g=g_src, reverse=True)
+
+      return z, z_hat_hat

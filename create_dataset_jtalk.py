@@ -34,8 +34,15 @@ def create_dataset(filename):
     Correspondence_list = list()
     output_file_list = list()
     output_file_list_val = list()
+    after_output_file_list = list()
+    after_output_file_list_val = list()
     output_file_list_textless = list()
     output_file_list_val_textless = list()
+    all_speakers = list()
+    for i, x in enumerate(textful_dir_list):
+      all_speakers.append(speaker_id + i)
+
+
     for d in textful_dir_list:
         wav_file_list = glob.glob(d+"/wav/*.wav")
         lab_file_list = glob.glob(d + "/text/*.txt")
@@ -52,12 +59,25 @@ def create_dataset(filename):
             print(test)
             print(wav + "|"+ str(speaker_id) + "|"+ test)
             if counter % 10 != 0:
-                output_file_list.append(wav + "|"+ str(speaker_id) + "|"+ test + "\n")
+                output_file_list.append(((wav + "|"+ str(speaker_id) + "|"+ test),speaker_id))
             else:
-                output_file_list_val.append(wav + "|"+ str(speaker_id) + "|"+ test + "\n")
+                output_file_list_val.append(((wav + "|"+ str(speaker_id) + "|"+ test),speaker_id))
             counter = counter +1
-        Correspondence_list.append(str(speaker_id)+"|"+os.path.basename(d) + "\n")
+        Correspondence_list.append(str(speaker_id)+"|"+os.path.basename(d))
         speaker_id = speaker_id + 1
+
+    for sid in all_speakers:
+      for text in output_file_list:
+        if text[1] == sid:
+          continue
+        else:
+          after_output_file_list.append(text[0] + "|"+ str(sid) + "\n")
+      
+      for text in output_file_list_val:
+        if text[1] == sid:
+          continue
+        else:
+          after_output_file_list_val.append(text[0] + "|"+ str(sid) + "\n")
 
     for d in textless_dir_list:
         wav_file_list = glob.glob(d+"/*.wav")
@@ -74,9 +94,9 @@ def create_dataset(filename):
         speaker_id = speaker_id + 1
 
     with open('filelists/' + filename + '_textful.txt', 'w', encoding='utf-8', newline='\n') as f:
-        f.writelines(output_file_list)
+        f.writelines(after_output_file_list)
     with open('filelists/' + filename + '_textful_val.txt', 'w', encoding='utf-8', newline='\n') as f:
-        f.writelines(output_file_list_val)
+        f.writelines(after_output_file_list_val)
     with open('filelists/' + filename + '_textless.txt', 'w', encoding='utf-8', newline='\n') as f:
         f.writelines(output_file_list_textless)
     with open('filelists/' + filename + '_val_textless.txt', 'w', encoding='utf-8', newline='\n') as f:
