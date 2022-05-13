@@ -15,7 +15,10 @@ from torch.nn.parallel import DataParallel as DP
 from torch.cuda.amp import autocast, GradScaler
 import datetime
 import pytz
+import time
 from tqdm import tqdm
+import warnings
+
 
 import commons
 import utils
@@ -37,6 +40,10 @@ from losses import (
 from mel_processing import mel_spectrogram_torch, spec_to_mel_torch
 from text.symbols import symbols
 
+#stftの警告対策
+warnings.resetwarnings()
+warnings.simplefilter('ignore', UserWarning)
+warnings.simplefilter('ignore', DeprecationWarning)
 
 torch.backends.cudnn.benchmark = True
 global_step = 0
@@ -51,6 +58,7 @@ def main():
   os.environ['MASTER_PORT'] = '80000'
 
   hps = utils.get_hparams()
+
   mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps,))
 
 
@@ -172,23 +180,24 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
           hps.data.mel_fmin, 
           hps.data.mel_fmax)
       y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
-      y_hat_mel = mel_spectrogram_torch(
-          y_hat.squeeze(1), 
-          hps.data.filter_length, 
-          hps.data.n_mel_channels, 
-          hps.data.sampling_rate, 
-          hps.data.hop_length, 
-          hps.data.win_length, 
-          hps.data.mel_fmin, 
-          hps.data.mel_fmax
-      )
-      y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size) # slice 
+    y_hat = y_hat.float()
+    y_hat_mel = mel_spectrogram_torch(
+        y_hat.squeeze(1), 
+        hps.data.filter_length, 
+        hps.data.n_mel_channels, 
+        hps.data.sampling_rate, 
+        hps.data.hop_length, 
+        hps.data.win_length, 
+        hps.data.mel_fmin, 
+        hps.data.mel_fmax
+    )
+    y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size) # slice 
 
-      # Discriminator
-      y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
-      with autocast(enabled=False):
-        loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(y_d_hat_r, y_d_hat_g)
-        loss_disc_all = loss_disc
+    # Discriminator
+    y_d_hat_r, y_d_hat_g, _, _ = net_d(y, y_hat.detach())
+    with autocast(enabled=False):
+      loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(y_d_hat_r, y_d_hat_g)
+      loss_disc_all = loss_disc
     optim_d.zero_grad()
     scaler.scale(loss_disc_all).backward()
     scaler.unscale_(optim_d)
@@ -273,19 +282,20 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
               hps.data.mel_fmin, 
               hps.data.mel_fmax)
           y_mel = commons.slice_segments(mel, ids_slice, hps.train.segment_size // hps.data.hop_length)
-          y_hat_mel = mel_spectrogram_torch(
-              y_hat.squeeze(1), 
-              hps.data.filter_length, 
-              hps.data.n_mel_channels, 
-              hps.data.sampling_rate, 
-              hps.data.hop_length, 
-              hps.data.win_length, 
-              hps.data.mel_fmin, 
-              hps.data.mel_fmax
-          )
-          batch_num = batch_idx
+        y_hat = y_hat.float()
+        y_hat_mel = mel_spectrogram_torch(
+            y_hat.squeeze(1), 
+            hps.data.filter_length, 
+            hps.data.n_mel_channels, 
+            hps.data.sampling_rate, 
+            hps.data.hop_length, 
+            hps.data.win_length, 
+            hps.data.mel_fmin, 
+            hps.data.mel_fmax
+        )
+        batch_num = batch_idx
 
-          y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size) # slice 
+        y = commons.slice_segments(y, ids_slice * hps.data.hop_length, hps.train.segment_size) # slice 
 
         with autocast(enabled=hps.train.fp16_run):
           with autocast(enabled=False):
