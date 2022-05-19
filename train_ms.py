@@ -12,6 +12,7 @@ from torch.utils.tensorboard import SummaryWriter
 import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.nn.parallel import DataParallel as DP
 from torch.cuda.amp import autocast, GradScaler
 import datetime
 import pytz
@@ -75,7 +76,7 @@ def run(rank, n_gpus, hps):
   if cpu_count > 8:
     cpu_count = 8
 
-  dist.init_process_group(backend='nccl', init_method='env://', world_size=n_gpus, rank=rank)
+  dist.init_process_group(backend='gloo', init_method='env://', world_size=n_gpus, rank=rank)
   torch.manual_seed(hps.train.seed)
   torch.cuda.set_device(rank)
   train_dataset = TextAudioSpeakerLoader(hps.data.training_files, hps.data)
@@ -117,8 +118,8 @@ def run(rank, n_gpus, hps):
       hps.train.learning_rate, 
       betas=hps.train.betas, 
       eps=hps.train.eps)
-  net_g = DDP(net_g, device_ids=[rank])
-  net_d = DDP(net_d, device_ids=[rank])
+  net_g = DP(net_g, device_ids=[rank])
+  net_d = DP(net_d, device_ids=[rank])
 
   logger.info('FineTuning : '+str(hps.fine_flag))
   if hps.fine_flag:
