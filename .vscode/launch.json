@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "train_ms.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "0"
+            },
+            "args": [
+                "-c",
+                "configs/train_config_zundamon.json",
+                "-m",
+                "20220531_da1",
+                "-fg",
+                "fine_model/G_180000.pth",
+                "-fd",
+                "fine_model/D_180000.pth"
+            ]
+        }
+    ]
+}

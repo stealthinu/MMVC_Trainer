@@ -1,0 +1,176 @@
+RTX3090
+
+
+fp16:True
+
+batch size 4
+1.04 it/s
+1.64
+1.71
+1.74
+1.74
+1.72
+1.75
+1.71
+1.74
+1.73
+
+batch size 8
+1.22 s/it
+1.29 it/s
+1.30
+1.33
+1.33
+1.32
+1.32
+1.32
+1.34
+1.33
+
+batch size 10
+2.51 s/it
+1.01 s/it
+1.17 it/s
+1.04 it/s
+1.11 it/s
+1.15 it/s
+1.09 it/s
+1.20 it/s
+1.21 it/s
+1.20 it/s
+
+batch size 12
+1.76 s/it
+1.02 s/it
+1.06 it/s
+1.05
+1.07
+1.08
+1.07
+1.09
+1.08
+1.09
+
+batch size 16
+2.49 s/it
+1.22 s/it
+1.11
+1.13
+1.08
+1.07
+1.08
+1.09
+1.07
+1.09
+
+batch size 20
+3.13 s/it
+1.56 s/it
+1.28 s/it
+1.27
+1.24
+1.27
+1.25
+1.31
+1.25
+1.26
+
+batch size 24
+3.55 s/it
+1.48 s/it
+1.41
+1.46
+1.38
+1.41
+1.41
+1.41
+1.40
+1.41
+
+
+fp16:False
+
+batch size 4
+1.16 it/s
+1.88 it/s
+1.96 it/s
+1.96 it/s
+1.95 it/s
+1.93 it/s
+1.95 it/s
+1.93 it/s
+1.95 it/s
+1.98 it/s
+
+batch size 8
+1.17 s/it
+1.36 it/s
+1.39 it/s
+1.43 it/s
+1.44 it/s
+1.43 it/s
+1.45 it/s
+1.42 it/s
+1.44 it/s
+1.43 it/s
+
+batch size 12
+1.71 s/it
+1.03 it/s
+1.14 it/s
+1.12 it/s
+1.13 it/s
+1.13 it/s
+1.12 it/s
+1.14 it/s
+1.13 it/s
+1.15 it/s
+
+batch size 16
+2.41 s/it
+1.11 s/it
+1.06 s/it
+1.11 s/it
+1.07 s/it
+1.05 s/it
+1.07 s/it
+1.05 s/it
+1.04 s/it
+1.06 s/it
+
+batch size 20
+2.79 s/it
+1.35 s/it
+1.26 s/it
+1.24 s/it
+1.23 s/it
+1.24 s/it
+1.23 s/it
+1.26 s/it
+1.23 s/it
+1.23 s/it
+
+batch size 24
+2.54 s/it
+1.45 s/it
+1.38 s/it
+1.40 s/it
+1.36 s/it
+1.40 s/it
+1.37 s/it
+1.39 s/it
+1.37 s/it
+1.36 s/it
+
+
+
+2.79
+1.35
+1.26
+1.24
+1.23
+1.24
+1.23
+1.26
+1.23
+1.23

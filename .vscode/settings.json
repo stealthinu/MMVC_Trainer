@@ -1,0 +1,6 @@
+{
+    "jupyter.jupyterServerType": "local",
+    "python.analysis.extraPaths": [
+    ],
+    "restructuredtext.syntaxHighlighting.disabled": true,    
+}
