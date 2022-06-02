@@ -102,5 +102,8 @@
     "min_amplitude"        : 0.001,
     "max_amplitude"        : 0.04,
     "frequency_mask_p"     : 0.5
+  },
+  "others": {
+    "os_type": "windows"
   }
 }
