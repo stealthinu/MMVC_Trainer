@@ -15,7 +15,7 @@
                 "-c",
                 "configs/train_config_zundamon.json",
                 "-m",
-                "20220531_da1",
+                "20220614",
                 "-fg",
                 "fine_model/G_180000.pth",
                 "-fd",
