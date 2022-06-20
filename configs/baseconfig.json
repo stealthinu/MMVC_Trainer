@@ -89,8 +89,6 @@
   },
   "augmentation": {
     "enable"               : true,
-    "shift_p"              : 0.5,
-    "max_shift"            : 127,
     "gain_p"               : 0.5,
     "min_gain_in_db"       : -10,
     "max_gain_in_db"       :  10,

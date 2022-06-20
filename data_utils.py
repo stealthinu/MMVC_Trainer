@@ -176,8 +176,6 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         self.no_text = no_text
         self.augmentation = augmentation
         if augmentation :
-            self.shift_p = augmentation_params.shift_p
-            self.max_shift = augmentation_params.max_shift
             self.gain_p = augmentation_params.gain_p
             self.min_gain_in_db = augmentation_params.min_gain_in_db
             self.max_gain_in_db = augmentation_params.max_gain_in_db
@@ -266,9 +264,6 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         return spec, audio_norm
 
     def add_augmentation(self, audio, sampling_rate):
-        shift = 0
-        if random.random() <= self.shift_p:
-            shift = random.randint(0, self.max_shift)
         gain_in_db = 0.0
         if random.random() <= self.gain_p:
             gain_in_db = random.uniform(self.min_gain_in_db, self.max_gain_in_db)
@@ -279,7 +274,6 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         if random.random() <= self.pitch_shift_p:
             pitch_shift_semitones = random.uniform(self.min_semitones, self.max_semitones) * 100 # 1/100 semitone 単位指定のため
         augmentation_effects = [
-            ["delay", f"{shift}s"],
             ["gain",  f"{gain_in_db}"],
             ["tempo", f"{time_stretch_rate}"],
             ["pitch", f"{pitch_shift_semitones}"],
