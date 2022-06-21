@@ -1,7 +1,7 @@
 {
   "train": {
     "log_interval": 1000,
-    "eval_interval": 5000,
+    "eval_interval": 50000,
     "seed": 1234,
     "epochs": 1000,
     "learning_rate": 0.0002,
@@ -89,8 +89,6 @@
   },
   "augmentation": {
     "enable"               : false,
-    "shift_p"              : 0.5,
-    "max_shift"            : 127,
     "gain_p"               : 0.5,
     "min_gain_in_db"       : -10,
     "max_gain_in_db"       :  10,
