@@ -466,7 +466,7 @@ class SynthesizerTrn(nn.Module):
       g = None
 
     #z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
-    z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths) # encodeの般化能力を増すためsid渡さない
+    z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths) # encodeの汎化能力を増すためsid渡さない
     z_p = self.flow(z, y_mask, g=g)
 
     with torch.no_grad():
