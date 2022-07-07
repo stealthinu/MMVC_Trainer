@@ -132,3 +132,9 @@ dmypy.json
 .history
 logs/
 *.spec.pt
+
+# dev
+.vscode/
+dataset/
+local/
+temp/
