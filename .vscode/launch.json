@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Python: train_ms",
             "type": "python",
             "request": "launch",
             "program": "train_ms.py",
@@ -13,13 +13,9 @@
             },
             "args": [
                 "-c",
-                "configs/train_config_zundamon.json",
+                "configs/mytrain_config_zundamon_dev.json",
                 "-m",
-                "20220620_test",
-                "-fg",
-                "fine_model/G_180000.pth",
-                "-fd",
-                "fine_model/D_180000.pth"
+                "debug_test"
             ]
         }
     ]
