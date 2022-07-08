@@ -141,7 +141,9 @@ class TextEncoder(nn.Module):
       n_heads,
       n_layers,
       kernel_size,
-      p_dropout):
+      p_dropout,
+      n_gain=11,
+      n_pitch=11):
     super().__init__()
     self.n_vocab = n_vocab
     self.out_channels = out_channels
@@ -151,9 +153,22 @@ class TextEncoder(nn.Module):
     self.n_layers = n_layers
     self.kernel_size = kernel_size
     self.p_dropout = p_dropout
+    self.n_gain = n_gain
+    self.n_pitch = n_pitch
 
-    self.emb = nn.Embedding(n_vocab, hidden_channels)
-    nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
+    # hidden_channels を vocab, gain, pitch で場所を分けて共用して使う
+    # hidden_channels:192 (vocab:172, gain:10, pitch:10) 
+    n_all = n_vocab * 4 + n_gain + n_pitch # vocab のほうが音量や音程より4倍くらい価値がありそうとの想定
+    gain_hidden_channels = hidden_channels * n_gain // n_all
+    pitch_hidden_channels = hidden_channels * n_pitch // n_all
+    vocab_hidden_channels = hidden_channels - gain_hidden_channels - pitch_hidden_channels
+    self.vocab_emb = nn.Embedding(n_vocab, vocab_hidden_channels)
+    self.gain_emb = nn.Embedding(n_gain, gain_hidden_channels)
+    self.pitch_emb = nn.Embedding(n_pitch, pitch_hidden_channels)
+    # 最後にcatするので全体ではhidden_channelsサイズになるからhidden_channelsでよいのではないかと思う
+    nn.init.normal_(self.vocab_emb.weight, 0.0, hidden_channels**-0.5)
+    nn.init.normal_(self.gain_emb.weight, 0.0, hidden_channels**-0.5)
+    nn.init.normal_(self.pitch_emb.weight, 0.0, hidden_channels**-0.5)
 
     self.encoder = attentions.Encoder(
       hidden_channels,
@@ -164,8 +179,11 @@ class TextEncoder(nn.Module):
       p_dropout)
     self.proj= nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
-  def forward(self, x, x_lengths):
-    x = self.emb(x) * math.sqrt(self.hidden_channels) # [b, t, h]
+  def forward(self, x, x_lengths, gain=None, pitch=None):
+    gain = torch.randint(0, 11, (20, 157)).to(device=x.device, dtype=x.dtype)
+    pitch = torch.randint(0, 11, (20, 157)).to(device=x.device, dtype=x.dtype)
+    emb = torch.cat([self.vocab_emb(x), self.gain_emb(gain), self.pitch_emb(pitch)], dim=2) # vocab, gain, pitchのembedingをcatして使う
+    x = emb * math.sqrt(self.hidden_channels) # [b, t, h]
     x = torch.transpose(x, 1, -1) # [b, h, t]
     x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
 
