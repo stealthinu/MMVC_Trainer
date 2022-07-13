@@ -15,7 +15,11 @@
                 "-c",
                 "configs/mytrain_config_zundamon_dev.json",
                 "-m",
-                "debug_test"
+                "debug_test",
+                "-fg",
+                "G_500000_jvs_noda.pth",
+                "-fd",
+                "D_500000_jvs_noda.pth"
             ]
         }
     ]
