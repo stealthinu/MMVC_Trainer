@@ -180,8 +180,9 @@ class TextEncoder(nn.Module):
     self.proj= nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
   def forward(self, x, x_lengths, gain=None, pitch=None):
-    gain = torch.randint(0, 11, (20, 157)).to(device=x.device, dtype=x.dtype)
-    pitch = torch.randint(0, 11, (20, 157)).to(device=x.device, dtype=x.dtype)
+    # xのサイズは[20, 157]とかで音素情報ベースのベクトルになっててスペクトログラムに合わせたベクトルではない
+    gain = torch.zeros_like(x).to(device=x.device, dtype=x.dtype) # ダミー
+    pitch = torch.zeros_like(x).to(device=x.device, dtype=x.dtype) # ダミー
     emb = torch.cat([self.vocab_emb(x), self.gain_emb(gain), self.pitch_emb(pitch)], dim=2) # vocab, gain, pitchのembedingをcatして使う
     x = emb * math.sqrt(self.hidden_channels) # [b, t, h]
     x = torch.transpose(x, 1, -1) # [b, h, t]
@@ -462,7 +463,9 @@ class SynthesizerTrn(nn.Module):
         n_heads,
         n_layers,
         kernel_size,
-        p_dropout)
+        p_dropout,
+        n_gain=11,
+        n_pitch=11)
     self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
     self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
     self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, gin_channels=gin_channels)
@@ -477,7 +480,11 @@ class SynthesizerTrn(nn.Module):
 
   def forward(self, x, x_lengths, y, y_lengths, sid=None):
 
-    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
+    specs = torch.transpose(y, 1, 2)
+    gains = torch.sum(specs, dim=2)
+    pitches = torch.argmax(specs, dim=2)
+
+    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths, gain=gains, pitch=pitches)
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:
