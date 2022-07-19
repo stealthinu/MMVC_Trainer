@@ -17,9 +17,9 @@
                 "-m",
                 "debug_test",
                 "-fg",
-                "G_500000_jvs_noda.pth",
+                "fine_model/G_500000_jvs_noda.pth",
                 "-fd",
-                "D_500000_jvs_noda.pth"
+                "fine_model/D_500000_jvs_noda.pth"
             ]
         }
     ]
