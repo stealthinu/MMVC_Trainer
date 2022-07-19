@@ -459,7 +459,7 @@ class SynthesizerTrn(nn.Module):
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
   def forward(self, x, x_lengths, y, y_lengths, sid=None):
-    x_tmp = x
+    x_phonemes = x
 
     x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
     if self.n_speakers > 0:
@@ -482,20 +482,21 @@ class SynthesizerTrn(nn.Module):
       attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
       attn = monotonic_align.maximum_path(neg_cent, attn_mask.squeeze(1)).unsqueeze(1).detach()
 
-    # decode
-    phonemes = x_tmp.tolist()
+    # x, attn decode output
+    phonemes = x_phonemes.tolist()
     for i, phrases in enumerate(attn.tolist()):
+      phoneme_list = phonemes[i]
+      symbol_text = ""
+      for phoneme in phoneme_list:
+        symbol_text += index_to_symbol(phoneme)
+      print(f"x: {symbol_text}")
       for phrase in phrases:
         symbol_text = ""
         for phoneme in phrase:
           if 1 not in phoneme:
             continue
           symbol_text += index_to_symbol(phonemes[i][phoneme.index(1)])
-          #print(index_to_symbol(phonemes[i][phoneme.index(1)]))
-        print(symbol_text.replace('A', '.'))
-          #print(phoneme.index(1))
-    #phoneme_list[i][j]
-    #attn[0, 0, 60].tolist().index(1)
+        print(f"attn: {symbol_text}")
 
     w = attn.sum(2)
     if self.use_sdp:

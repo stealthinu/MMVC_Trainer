@@ -44,7 +44,16 @@ def sequence_to_text(sequence):
     result += s
   return result
 
-
+def index_to_symbol(index):
+  symbol = _id_to_symbol[index]
+  if symbol == "A": # 特別処理で「A」が「_pad」になってるのを表示
+    symbol = "_"
+  if symbol == "pau": # 長くなるので「pau」は「.」で表現
+    symbol = "."
+  if len(symbol) > 1:
+    symbol = "<" + symbol + ">"
+  return symbol
+  
 def _clean_text(text, cleaner_names):
   for name in cleaner_names:
     cleaner = getattr(cleaners, name)
