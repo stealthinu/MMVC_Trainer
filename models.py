@@ -176,6 +176,15 @@ class TextEncoder(nn.Module):
     m, logs = torch.split(stats, self.out_channels, dim=1)
     return x, m, logs, x_mask
 
+  def decode_zp2phonemes(self, z_p):
+    z_p_spec = torch.transpose(z_p, 1, 2)
+    w = torch.t(self.emb.weight)
+    inverse_w = torch.reciprocal(w) / w.size(0) # 重みを逆数にして入力項目数で割る
+    inversed = torch.matmul(z_p_spec, inverse_w)
+    sorted = torch.sort(inversed, descending=True)
+    # sorted.values, sorted.indices
+    return sorted
+
 
 class ResidualCouplingBlock(nn.Module):
   def __init__(self,
@@ -483,6 +492,7 @@ class SynthesizerTrn(nn.Module):
       attn = monotonic_align.maximum_path(neg_cent, attn_mask.squeeze(1)).unsqueeze(1).detach()
 
     # x, attn decode output
+    zp_phonemes = self.enc_p.decode_zp2phonemes(z_p) # z_pをenc_pのembでdecodeして音素と確度を得る
     phonemes = x_phonemes.tolist()
     for i, phrases in enumerate(attn.tolist()):
       phoneme_list = phonemes[i]
@@ -497,6 +507,13 @@ class SynthesizerTrn(nn.Module):
             continue
           symbol_text += index_to_symbol(phonemes[i][phoneme.index(1)])
         print(f"attn: {symbol_text}")
+      # z_p decode output
+      zp_phonemes_values = zp_phonemes.values[i]
+      zp_phonemes_indices = zp_phonemes.indices[i]
+      symbol_text = ""
+      for zp_phoneme in zp_phonemes_indices.data.cpu().numpy():
+        symbol_text += index_to_symbol(zp_phoneme[0]) # とりあえず一番確率の高いやつだけ表示
+      print(f"z_p: {symbol_text}")
 
     w = attn.sum(2)
     if self.use_sdp:

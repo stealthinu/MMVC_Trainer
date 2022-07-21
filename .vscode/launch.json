@@ -13,7 +13,7 @@
             },
             "args": [
                 "-c",
-                "configs/mytrain_config_zundamon_dev.json",
+                "configs/train_config_jvs_dev.json",
                 "-m",
                 "debug_test",
                 "-fg",
