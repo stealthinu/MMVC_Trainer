@@ -1,6 +1,7 @@
 """ from https://github.com/keithito/tacotron """
 from text import cleaners
 from text.symbols import symbols
+import commons 
 
 
 # Mappings from symbol to numeric ID and vice versa:
@@ -53,7 +54,11 @@ def index_to_symbol(index):
   if len(symbol) > 1:
     symbol = "<" + symbol + ">"
   return symbol
-  
+
+def sample_phonemes_text():
+  '''音素毎のm_p,logs_pを得るためのサンプルテキストを返す'''
+  return commons.intersperse(symbols, "pau")
+
 def _clean_text(text, cleaner_names):
   for name in cleaner_names:
     cleaner = getattr(cleaners, name)

@@ -13,7 +13,7 @@ from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from commons import init_weights, get_padding
 
-from text import index_to_symbol
+from text import index_to_symbol, sample_phonemes_text, cleaned_text_to_sequence
 
 class StochasticDurationPredictor(nn.Module):
   def __init__(self, in_channels, filter_channels, kernel_size, p_dropout, n_flows=4, gin_channels=0):
@@ -176,15 +176,53 @@ class TextEncoder(nn.Module):
     m, logs = torch.split(stats, self.out_channels, dim=1)
     return x, m, logs, x_mask
 
-  def decode_zp2phonemes(self, z_p):
-    z_p_spec = torch.transpose(z_p, 1, 2)
-    w = torch.t(self.emb.weight)
-    inverse_w = torch.reciprocal(w) / w.size(0) # 重みを逆数にして入力項目数で割る
-    inversed = torch.matmul(z_p_spec, inverse_w)
-    sorted = torch.sort(inversed, descending=True)
-    # sorted.values, sorted.indices
-    return sorted
+  def kl_loss(self, z_p, logs_q, m_p, logs_p, z_mask):
+    # 後で一括で出せるように修正する
+    """
+    z_p, logs_q: [b, h, t_t]
+    m_p, logs_p: [b, h, t_t]
+    """
+    z_p = z_p.float()
+    logs_q = logs_q.float()
+    m_p = m_p.float()
+    logs_p = logs_p.float()
+    z_mask = z_mask.float()
 
+    kl = logs_p - logs_q - 0.5
+    kl += 0.5 * ((z_p - m_p)**2) * torch.exp(-2. * logs_p)
+    kl = torch.sum(kl * z_mask)
+    l = kl / torch.sum(z_mask)
+    return l
+
+  def decode_zp2phonemes(self, z_p, logs_q):
+    phonemes_text = sample_phonemes_text()
+    phonemes_ids = cleaned_text_to_sequence(phonemes_text) # 音素毎に<pau>をはさんだ[<pau>,0,<pau>,1,<pau>,2, ... ]というデータが得られる
+    phonemes_ids_length = torch.tensor([len(phonemes_ids)]).to(device=0)
+    phonemes_ids = torch.tensor(phonemes_ids).unsqueeze(0).to(device=0)
+    with torch.no_grad():
+      x, m_p, logs_p, x_mask = self.forward(phonemes_ids, phonemes_ids_length)
+      # スペクトログラムの時間毎に切り出せるようにする
+      m_p_spec = m_p.transpose(1, 2)
+      logs_p_spec = logs_p.transpose(1, 2)
+      z_p_spec = z_p.transpose(1, 2)
+      logs_q_spec = logs_q.transpose(1, 2)
+      # 1音素毎に<pau>入れてるのでそれを除く
+      phonemes_ids = phonemes_ids[:, 1::2]
+      m_p_spec = m_p_spec[:, 1::2]
+      logs_p_spec = logs_p_spec[:, 1::2]
+      # とりあえず実験で batch=0 のやつだけ見る 後でfor回さずに一括で出せるように修正する
+      p_phonemes = torch.zeros(z_p.size(0), z_p.size(2), phonemes_ids.size(1)) # batch, t_t, phonemes
+      z_mask = torch.tensor([1]).unsqueeze(0).unsqueeze(0).to(device=0)
+      for i, (z_p_i, logs_q_i) in enumerate(zip(z_p_spec[0], logs_q_spec[0])):
+        for j, (m_p_j, logs_p_j) in enumerate(zip(m_p_spec[0], logs_p_spec[0])):
+          # 時間1でスペクトログラムが最後にくるよう並べ戻す
+          z_p_i    = z_p_i.unsqueeze(0).unsqueeze(0).transpose(1, 2)
+          logs_q_i = logs_q_i.unsqueeze(0).unsqueeze(0).transpose(1, 2)
+          m_p_j    = m_p_j.unsqueeze(0).unsqueeze(0).transpose(1, 2)
+          logs_p_j = logs_p_j.unsqueeze(0).unsqueeze(0).transpose(1, 2)
+          loss = self.kl_loss(z_p_i, logs_q_i, m_p_j, logs_p_j, z_mask)
+          p_phonemes[0, i, j] = loss
+    return p_phonemes
 
 class ResidualCouplingBlock(nn.Module):
   def __init__(self,
@@ -492,7 +530,7 @@ class SynthesizerTrn(nn.Module):
       attn = monotonic_align.maximum_path(neg_cent, attn_mask.squeeze(1)).unsqueeze(1).detach()
 
     # x, attn decode output
-    zp_phonemes = self.enc_p.decode_zp2phonemes(z_p) # z_pをenc_pのembでdecodeして音素と確度を得る
+    zp_phonemes = self.enc_p.decode_zp2phonemes(z_p, logs_q) # z_pをenc_pのembでdecodeして音素と確度を得る
     phonemes = x_phonemes.tolist()
     for i, phrases in enumerate(attn.tolist()):
       phoneme_list = phonemes[i]
@@ -508,11 +546,9 @@ class SynthesizerTrn(nn.Module):
           symbol_text += index_to_symbol(phonemes[i][phoneme.index(1)])
         print(f"attn: {symbol_text}")
       # z_p decode output
-      zp_phonemes_values = zp_phonemes.values[i]
-      zp_phonemes_indices = zp_phonemes.indices[i]
       symbol_text = ""
-      for zp_phoneme in zp_phonemes_indices.data.cpu().numpy():
-        symbol_text += index_to_symbol(zp_phoneme[0]) # とりあえず一番確率の高いやつだけ表示
+      for zp_phoneme in zp_phonemes[0]:
+        symbol_text += index_to_symbol(zp_phoneme.abs().argmin().cpu().item()) # とりあえず一番loss低いやつだけ表示
       print(f"z_p: {symbol_text}")
 
     w = attn.sum(2)
