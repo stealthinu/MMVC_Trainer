@@ -14,6 +14,7 @@ from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from commons import init_weights, get_padding
 
 from text import index_to_symbol, sample_phonemes_text, cleaned_text_to_sequence
+from mel_processing import spectrogram_torch
 
 class StochasticDurationPredictor(nn.Module):
   def __init__(self, in_channels, filter_channels, kernel_size, p_dropout, n_flows=4, gin_channels=0):
@@ -462,6 +463,12 @@ class SynthesizerTrn(nn.Module):
     n_speakers=0,
     gin_channels=0,
     use_sdp=True,
+    sampling_rate=24000,
+    filter_length=512, 
+    hop_length=128, 
+    win_length=512,
+    sid_src=107,
+    sid_tgt=108,
     **kwargs):
 
     super().__init__()
@@ -482,8 +489,13 @@ class SynthesizerTrn(nn.Module):
     self.segment_size = segment_size
     self.n_speakers = n_speakers
     self.gin_channels = gin_channels
-
     self.use_sdp = use_sdp
+    self.sampling_rate = sampling_rate
+    self.filter_length = filter_length 
+    self.hop_length = hop_length 
+    self.win_length = win_length
+    self.sid_src = sid_src
+    self.sid_tgt = sid_tgt
 
     self.enc_p = TextEncoder(n_vocab,
         inter_channels,
@@ -565,8 +577,31 @@ class SynthesizerTrn(nn.Module):
     logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(1, 2)
 
     z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
-    o = self.dec(z_slice, g=g)
-    return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q)
+    #o = self.dec(z_slice, g=g)
+    o = self.dec(z, g=g)
+
+    # vc loss
+    assert self.n_speakers > 0, "n_speakers have to be larger than 0."
+    sid_srcs = torch.zeros_like(sid) # バッチサイズとdeviceをsidの情報を使って入れ物作る
+    sid_tgts = torch.zeros_like(sid)
+    sid_srcs[:] = self.sid_src
+    sid_tgts[:] = self.sid_tgt
+    g_src = self.emb_g(sid_srcs).unsqueeze(-1)
+    g_tgt = self.emb_g(sid_tgts).unsqueeze(-1)
+    vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(y, y_lengths, g=g_src)
+    vc_z_p = self.flow(vc_z, vc_y_mask, g=g_src)
+    vc_z_hat = self.flow(vc_z_p, vc_y_mask, g=g_tgt, reverse=True)
+    vc_o_hat = self.dec(vc_z_hat * vc_y_mask, g=g_tgt)
+    vc_spec = spectrogram_torch(vc_o_hat.squeeze(1), self.filter_length,
+                self.sampling_rate, self.hop_length, self.win_length,
+                center=False)
+    vc_y_hat = torch.squeeze(vc_spec, 0)
+    vc_zr, vc_mr_q, vc_logsr_q, vc_yr_mask = self.enc_q(vc_y_hat, y_lengths, g=g_tgt)
+    vc_zr_p = self.flow(vc_zr, vc_yr_mask, g=g_tgt)
+    vc_zr_hat = self.flow(vc_zr_p, vc_yr_mask, g=g_src, reverse=True)
+    vc_or_hat = self.dec(vc_zr_hat * vc_yr_mask, g=g_src)
+
+    return o, l_length, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q), vc_or_hat
 
   def infer(self, x, x_lengths, sid=None, noise_scale=1, length_scale=1, noise_scale_w=1., max_len=None):
     x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
@@ -595,31 +630,6 @@ class SynthesizerTrn(nn.Module):
     return o, attn, y_mask, (z, z_p, m_p, logs_p)
     
 
-  def voice_conversion_clean(self, y, y_lengths, sid_src, sid_tgt):
-    assert self.n_speakers > 0, "n_speakers have to be larger than 0."
-    g_src = self.emb_g(sid_src).unsqueeze(-1)
-    g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
-    z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src)
-
-    # m_p = m_q, logs_p = logs_q
-    with torch.no_grad():
-      # negative cross-entropy
-      s_p_sq_r = torch.exp(-2 * logs_q) # [b, d, t]
-      neg_cent1 = torch.sum(-0.5 * math.log(2 * math.pi) - logs_q, [1], keepdim=True) # [b, 1, t_s]
-      neg_cent2 = torch.matmul(-0.5 * (z_p ** 2).transpose(1, 2), s_p_sq_r) # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
-      neg_cent3 = torch.matmul(z_p.transpose(1, 2), (m_q * s_p_sq_r)) # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
-      neg_cent4 = torch.sum(-0.5 * (m_q ** 2) * s_p_sq_r, [1], keepdim=True) # [b, 1, t_s]
-      neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4
-
-      # TODO: x_mask = ???
-      attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
-      attn = monotonic_align.maximum_path(neg_cent, attn_mask.squeeze(1)).unsqueeze(1).detach()
-
-    z_p = self.flow(z, y_mask, g=g_src)
-    z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
-    o_hat = self.dec(z_hat * y_mask, g=g_tgt)
-    return o_hat, y_mask, (z, z_p, z_hat)
-
   def voice_conversion(self, y, y_lengths, sid_src, sid_tgt):
     assert self.n_speakers > 0, "n_speakers have to be larger than 0."
     g_src = self.emb_g(sid_src).unsqueeze(-1)
@@ -629,6 +639,26 @@ class SynthesizerTrn(nn.Module):
     z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
     o_hat = self.dec(z_hat * y_mask, g=g_tgt)
     return o_hat, y_mask, (z, z_p, z_hat)
+
+  def voice_conversion_reverse(self, y, y_lengths, sid_src, sid_tgt):
+    assert self.n_speakers > 0, "n_speakers have to be larger than 0."
+    sid_srcs = torch.torch.LongTensor([sid_src])
+    sid_tgts = torch.torch.LongTensor([sid_tgt])
+    g_src = self.emb_g(sid_srcs).unsqueeze(-1)
+    g_tgt = self.emb_g(sid_tgts).unsqueeze(-1)
+    vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(y, y_lengths, g=g_src)
+    vc_z_p = self.flow(vc_z, vc_y_mask, g=g_src)
+    vc_z_hat = self.flow(vc_z_p, vc_y_mask, g=g_tgt, reverse=True)
+    vc_o_hat = self.dec(vc_z_hat * vc_y_mask, g=g_tgt)
+    vc_spec = spectrogram_torch(vc_o_hat, self.filter_length,
+                self.sampling_rate, self.hop_length, self.win_length,
+                center=False)
+    vc_y_hat = torch.squeeze(vc_spec, 0)
+    vc_zr, vc_mr_q, vc_logsr_q, vc_yr_mask = self.enc_q(vc_y_hat, y_lengths, g=g_tgt)
+    vc_zr_p = self.flow(vc_zr, vc_yr_mask, g=g_tgt)
+    vc_zr_hat = self.flow(vc_zr_p, vc_yr_mask, g=g_src, reverse=True)
+    vc_or_hat = self.dec(vc_zr_hat * vc_yr_mask, g=g_src)
+    return vc_or_hat, vc_y_mask, (vc_zr, vc_zr_p, vc_zr_hat)
 
   def voice_ra_pa_db(self, y, y_lengths, sid_src, sid_tgt):
     assert self.n_speakers > 0, "n_speakers have to be larger than 0."
