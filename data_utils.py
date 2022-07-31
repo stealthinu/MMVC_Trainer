@@ -164,7 +164,7 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         2) normalizes text and converts them to sequences of integers
         3) computes spectrograms from audio files.
     """
-    def __init__(self, audiopaths_sid_text, hparams, no_text=False, augmentation=False, augmentation_params=None, no_use_textfile = False):
+    def __init__(self, audiopaths_sid_text, hparams, no_text=False, augmentation=False, augmentation_params=None, no_use_textfile=False, segment_size=8192):
         if no_use_textfile:
             self.audiopaths_sid_text = list()
         else:
@@ -176,6 +176,7 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         self.hop_length     = hparams.hop_length
         self.win_length     = hparams.win_length
         self.sampling_rate  = hparams.sampling_rate
+        self.segment_size  = segment_size
         self.no_text = no_text
         self.augmentation = augmentation
         if augmentation :
@@ -254,6 +255,7 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
             # audio(音声波形)は教師信号となるのでノイズは含まずaugmentationのみしたものを使用
             audio_norm = audio_augmented
             # spec(スペクトログラム)は入力信号となるのでaugmentationしてさらにノイズを付加したものを使用
+            print(f"filename: {filename}")
             spec = spectrogram_torch(audio_noised, self.filter_length,
                 self.sampling_rate, self.hop_length, self.win_length,
                 center=False)
@@ -273,6 +275,9 @@ class TextAudioSpeakerLoader(torch.utils.data.Dataset):
         time_stretch_rate = 1.0
         if random.random() <= self.time_stretch_p:
             time_stretch_rate = random.uniform(self.min_rate, self.max_rate)
+            print(f"audio_length: {audio.size(1)}")
+            if int(audio.size(1) / time_stretch_rate) < self.segment_size: # 8192/24000*1.25=0.43sよりも短い場合エラーになるのでtime_stretchしない
+                time_stretch_rate = 1.0
         pitch_shift_semitones = 0
         if random.random() <= self.pitch_shift_p:
             pitch_shift_semitones = random.uniform(self.min_semitones, self.max_semitones) * 100 # 1/100 semitone 単位指定のため
