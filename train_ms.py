@@ -134,16 +134,16 @@ def run(rank, n_gpus, hps):
   if hps.fine_flag:
       logger.info('Load model : '+str(hps.fine_model_g))
       logger.info('Load model : '+str(hps.fine_model_d))
-      _, _, _, epoch_str = utils.load_checkpoint(hps.fine_model_g, net_g, optim_g)
-      _, _, _, epoch_str = utils.load_checkpoint(hps.fine_model_d, net_d, optim_d)
+      _, _, _, global_step = utils.load_checkpoint(hps.fine_model_g, net_g, optim_g)
+      _, _, _, global_step = utils.load_checkpoint(hps.fine_model_d, net_d, optim_d)
       epoch_str = 1
       global_step = 0
 
   else:
     try:
-      _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g)
-      _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "D_*.pth"), net_d, optim_d)
-      global_step = (epoch_str - 1) * len(train_loader)
+      _, _, _, global_step = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g)
+      _, _, _, global_step = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "D_*.pth"), net_d, optim_d)
+      epoch_str = global_step // len(train_loader) + 1
     except:
       epoch_str = 1
       global_step = 0
@@ -259,15 +259,15 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
           global_step=global_step, 
           images=image_dict,
           scalars=scalar_dict)
-        utils.save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "G_latest_99999999.pth"))
-        utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "D_latest_99999999.pth"))
+        utils.save_checkpoint(net_g, optim_g, hps.train.learning_rate, global_step, os.path.join(hps.model_dir, "G_latest_99999999.pth"))
+        utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, global_step, os.path.join(hps.model_dir, "D_latest_99999999.pth"))
 
       if global_step % hps.train.eval_interval == 0 and global_step != 0:
         evaluate(hps, net_g, eval_loader, writer_eval, logger)
-        utils.save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "G_{}.pth".format(global_step)))
-        utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "D_{}.pth".format(global_step)))
-        utils.save_checkpoint(net_g, optim_g, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "G_latest_99999999.pth"))
-        utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, epoch, os.path.join(hps.model_dir, "D_latest_99999999.pth"))
+        utils.save_checkpoint(net_g, optim_g, hps.train.learning_rate, global_step, os.path.join(hps.model_dir, "G_{}.pth".format(global_step)))
+        utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, global_step, os.path.join(hps.model_dir, "D_{}.pth".format(global_step)))
+        utils.save_checkpoint(net_g, optim_g, hps.train.learning_rate, global_step, os.path.join(hps.model_dir, "G_latest_99999999.pth"))
+        utils.save_checkpoint(net_d, optim_d, hps.train.learning_rate, global_step, os.path.join(hps.model_dir, "D_latest_99999999.pth"))
     global_step += 1
 
  
