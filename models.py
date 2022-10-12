@@ -441,14 +441,6 @@ class SynthesizerTrn(nn.Module):
     self.use_sdp = use_sdp
     self.hps_data = hps_data
 
-    self.enc_p = TextEncoder(n_vocab,
-        inter_channels,
-        hidden_channels,
-        filter_channels,
-        n_heads,
-        n_layers,
-        kernel_size,
-        p_dropout)
     self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
     self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
     self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
@@ -456,9 +448,7 @@ class SynthesizerTrn(nn.Module):
     if n_speakers > 1:
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
-  def forward(self, x, x_lengths, y, y_lengths, sid=None, target_ids=None):
-
-    x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
+  def forward(self, y, y_lengths, sid=None, target_ids=None):
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:
@@ -466,22 +456,6 @@ class SynthesizerTrn(nn.Module):
 
     z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
     z_p = self.flow(z, y_mask, g=g)
-
-    with torch.no_grad():
-      # negative cross-entropy
-      s_p_sq_r = torch.exp(-2 * logs_p) # [b, d, t]
-      neg_cent1 = torch.sum(-0.5 * math.log(2 * math.pi) - logs_p, [1], keepdim=True) # [b, 1, t_s]
-      neg_cent2 = torch.matmul(-0.5 * (z_p ** 2).transpose(1, 2), s_p_sq_r) # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
-      neg_cent3 = torch.matmul(z_p.transpose(1, 2), (m_p * s_p_sq_r)) # [b, t_t, d] x [b, d, t_s] = [b, t_t, t_s]
-      neg_cent4 = torch.sum(-0.5 * (m_p ** 2) * s_p_sq_r, [1], keepdim=True) # [b, 1, t_s]
-      neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4
-
-      attn_mask = torch.unsqueeze(x_mask, 2) * torch.unsqueeze(y_mask, -1)
-      attn = monotonic_align.maximum_path(neg_cent, attn_mask.squeeze(1)).unsqueeze(1).detach() 
-
-    # expand prior
-    m_p = torch.matmul(attn.squeeze(1), m_p.transpose(1, 2)).transpose(1, 2)
-    logs_p = torch.matmul(attn.squeeze(1), logs_p.transpose(1, 2)).transpose(1, 2)
 
     z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
@@ -503,7 +477,7 @@ class SynthesizerTrn(nn.Module):
       vc_z_r_hat = self.flow(vc_z_r_p, vc_y_r_mask, g=g, reverse=True)
       vc_o_r_hat = self.dec(vc_z_r_hat * vc_y_r_mask, g=g)
 
-    return o, attn, ids_slice, x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q), vc_o_r_hat
+    return o, ids_slice, y_mask, (z, z_p, m_q, logs_q), vc_o_r_hat
 
   def make_random_target_sids(self, target_ids, sid):
     # target_sids は target_ids をランダムで埋める
