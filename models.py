@@ -418,6 +418,7 @@ class SynthesizerTrn(nn.Module):
     gin_channels=0,
     use_sdp=True,
     hps_data=None,
+    hubert=None,
     **kwargs):
 
     super().__init__()
@@ -443,39 +444,46 @@ class SynthesizerTrn(nn.Module):
 
     self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
     self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
-    self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
-
+    #self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
+    self.hubert = hubert
+    # hubert -> z spec_channelsが適当なので変更する flow8相当は 16->32
+    self.enc_vc = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
+    
     if n_speakers > 1:
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
-  def forward(self, y, y_lengths, sid=None, target_ids=None):
+  def forward(self, spec, spec_lengths, y, y_lengths, sid=None, target_ids=None):
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:
       g = None
 
-    z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g)
-    z_p = self.flow(z, y_mask, g=g)
+    z, m_q, logs_q, y_mask = self.enc_q(spec, spec_lengths, g=g)
 
-    z_slice, ids_slice = commons.rand_slice_segments(z, y_lengths, self.segment_size)
+    z_p = self.hubert(y)
+    z_p_lengths = spec_lengths # dummy あとでちゃんとした長さ出す
+    z_vc = self.enc_vc(z_p, z_p_lengths, g=g)
+
+    z_slice, ids_slice = commons.rand_slice_segments(z, spec_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
 
     # VC cycle
-    target_sids = self.make_random_target_sids(target_ids, sid)
-    target_g = self.emb_g(target_sids).unsqueeze(-1)
-    vc_spec = commons.slice_segments(y, ids_slice, self.segment_size)
-    vc_spec_length = torch.full_like(ids_slice, fill_value=self.segment_size)
-    vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(vc_spec, vc_spec_length, g=g)
-    vc_z_p = self.flow(vc_z, vc_y_mask, g=g)
-    vc_z_hat = self.flow(vc_z_p, vc_y_mask, g=target_g, reverse=True)
-    vc_o_hat = self.dec(vc_z_hat * vc_y_mask, g=target_g)
-    with torch.no_grad():
-      vc_spec_r = spectrogram_torch_data(vc_o_hat.squeeze(1), self.hps_data)
-      vc_spec_r_hat = torch.squeeze(vc_spec_r, 0)
-      vc_z_r, vc_mr_q, vc_logsr_q, vc_y_r_mask = self.enc_q(vc_spec_r_hat, vc_spec_length, g=target_g)
-      vc_z_r_p = self.flow(vc_z_r, vc_y_r_mask, g=target_g)
-      vc_z_r_hat = self.flow(vc_z_r_p, vc_y_r_mask, g=g, reverse=True)
-      vc_o_r_hat = self.dec(vc_z_r_hat * vc_y_r_mask, g=g)
+    # target_sids = self.make_random_target_sids(target_ids, sid)
+    # target_g = self.emb_g(target_sids).unsqueeze(-1)
+    # vc_spec = commons.slice_segments(spec, ids_slice, self.segment_size)
+    # vc_spec_length = torch.full_like(ids_slice, fill_value=self.segment_size)
+    # vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(vc_spec, vc_spec_length, g=g)
+    # vc_z_p = self.enc_vc(vc_z, vc_y_mask, g=g)
+    # vc_z_hat = self.enc_vc(vc_z_p, vc_y_mask, g=target_g, reverse=True)
+    # vc_o_hat = self.dec(vc_z_hat * vc_y_mask, g=target_g)
+    # with torch.no_grad():
+    #   vc_spec_r = spectrogram_torch_data(vc_o_hat.squeeze(1), self.hps_data)
+    #   vc_spec_r_hat = torch.squeeze(vc_spec_r, 0)
+    #   vc_z_r, vc_mr_q, vc_logsr_q, vc_y_r_mask = self.enc_q(vc_spec_r_hat, vc_spec_length, g=target_g)
+    #   vc_z_r_p = self.enc_vc(vc_z_r, vc_y_r_mask, g=target_g)
+    #   vc_z_r_hat = self.enc_vc(vc_z_r_p, vc_y_r_mask, g=g, reverse=True)
+    #   vc_o_r_hat = self.dec(vc_z_r_hat * vc_y_r_mask, g=g)
+    vc_o_r_hat = o
 
     return o, ids_slice, y_mask, (z, z_p, m_q, logs_q), vc_o_r_hat
 

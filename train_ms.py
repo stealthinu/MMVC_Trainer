@@ -119,12 +119,14 @@ def run(rank, n_gpus, hps):
       channels = hps.data.n_mel_channels
   else:
       channels = hps.data.filter_length // 2 + 1
+  hubert = torch.hub.load("bshall/hubert:main", "hubert_soft").cuda(rank)
   net_g = SynthesizerTrn(
       len(symbols),
       channels,
       hps.train.segment_size // hps.data.hop_length,
       n_speakers=hps.data.n_speakers,
       hps_data=hps.data,
+      hubert=hubert,
       **hps.model).cuda(rank)
   net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).cuda(rank)
   optim_g = torch.optim.AdamW(
@@ -198,7 +200,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     if hps.model.use_mel_train:
         spec = mel
     with autocast(enabled=hps.train.fp16_run):
-      y_hat, ids_slice, z_mask, (z, z_p, m_q, logs_q), vc_o_r_hat = net_g(spec, spec_lengths, speakers, target_ids)
+      y_hat, ids_slice, z_mask, (z, z_p, m_q, logs_q), vc_o_r_hat = net_g(y, y_lengths, spec, spec_lengths, speakers, target_ids)
     y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
     y_hat = y_hat.float()
     y_hat_mel = mel_spectrogram_torch_data(y_hat.squeeze(1), hps.data)
