@@ -447,22 +447,22 @@ class SynthesizerTrn(nn.Module):
     #self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
     self.hubert = hubert
     # hubert -> z spec_channelsが適当なので変更する flow8相当は 16->32
-    self.enc_vc = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
+    self.enc_vs = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
     
     if n_speakers > 1:
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
 
-  def forward(self, spec, spec_lengths, y, y_lengths, sid=None, target_ids=None):
+  def forward(self, y, y_lengths, spec, spec_lengths, sid=None, target_ids=None):
     if self.n_speakers > 0:
       g = self.emb_g(sid).unsqueeze(-1) # [b, h, 1]
     else:
       g = None
 
-    z, m_q, logs_q, y_mask = self.enc_q(spec, spec_lengths, g=g)
+    z, m_q, logs_q, spec_mask = self.enc_q(spec, spec_lengths, g=g)
 
-    z_p = self.hubert(y)
+    z_p = self.hubert.units(y)
     z_p_lengths = spec_lengths # dummy あとでちゃんとした長さ出す
-    z_vc = self.enc_vc(z_p, z_p_lengths, g=g)
+    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_vs(z_p, z_p_lengths, g=g)
 
     z_slice, ids_slice = commons.rand_slice_segments(z, spec_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
@@ -485,7 +485,7 @@ class SynthesizerTrn(nn.Module):
     #   vc_o_r_hat = self.dec(vc_z_r_hat * vc_y_r_mask, g=g)
     vc_o_r_hat = o
 
-    return o, ids_slice, y_mask, (z, z_p, m_q, logs_q), vc_o_r_hat
+    return o, ids_slice, spec_mask, (z, m_q, logs_q), z_p, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat
 
   def make_random_target_sids(self, target_ids, sid):
     # target_sids は target_ids をランダムで埋める

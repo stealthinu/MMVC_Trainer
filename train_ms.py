@@ -55,7 +55,7 @@ def main():
 
   n_gpus = torch.cuda.device_count()
   os.environ['MASTER_ADDR'] = 'localhost'
-  os.environ['MASTER_PORT'] = '80000'
+  os.environ['MASTER_PORT'] = '8000'
 
   hps = utils.get_hparams()
 
@@ -200,7 +200,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     if hps.model.use_mel_train:
         spec = mel
     with autocast(enabled=hps.train.fp16_run):
-      y_hat, ids_slice, z_mask, (z, z_p, m_q, logs_q), vc_o_r_hat = net_g(y, y_lengths, spec, spec_lengths, speakers, target_ids)
+      y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_p, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = net_g(y, y_lengths, spec, spec_lengths, speakers, target_ids)
     y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
     y_hat = y_hat.float()
     y_hat_mel = mel_spectrogram_torch_data(y_hat.squeeze(1), hps.data)
@@ -229,7 +229,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel # melを真ん中の半分だけ使うようにする
     loss_fm = feature_loss(fmap_r, fmap_g)
     loss_gen, losses_gen = generator_loss(y_d_hat_g)
-    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_vc
+    loss_z = F.l1_loss(z, vs_z) * 1.0
+    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_z + loss_vc
 
     optim_g.zero_grad()
     scaler.scale(loss_gen_all).backward()
@@ -318,7 +319,7 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
         for i in range(hps.train.backup.mean_of_num_eval):
           with autocast(enabled=hps.train.fp16_run):
             #Generator
-            y_hat, ids_slice, z_mask, (z, z_p, m_q, logs_q), vc_o_r_hat = generator(spec, spec_lengths, speakers, target_ids)
+            y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_p, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = generator(y, y_lengths, spec, spec_lengths, speakers, target_ids)
           y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
           y_hat = y_hat.float()
           y_hat_mel = mel_spectrogram_torch_data(y_hat.squeeze(1), hps.data)
@@ -330,6 +331,7 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
           disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
           disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
           loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
+          loss_z = F.l1_loss(z, vs_z) * 1.0
 
           scalar_dict["loss/g/mel"] += loss_mel
           scalar_dict["loss/g/vc"] += loss_vc
