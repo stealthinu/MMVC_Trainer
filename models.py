@@ -446,8 +446,8 @@ class SynthesizerTrn(nn.Module):
     self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
     #self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
     self.hubert = hubert
-    # hubert -> z spec_channelsが適当なので変更する flow8相当は 16->32
-    self.enc_vs = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
+    # hubert -> z hubertは256channel flow4相当は16layer
+    self.enc_vs = PosteriorEncoder(256, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
     
     if n_speakers > 1:
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
@@ -460,30 +460,33 @@ class SynthesizerTrn(nn.Module):
 
     z, m_q, logs_q, spec_mask = self.enc_q(spec, spec_lengths, g=g)
 
-    z_p = self.hubert.units(y)
-    z_p_lengths = spec_lengths # dummy あとでちゃんとした長さ出す
-    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_vs(z_p, z_p_lengths, g=g)
+    # z_p を hubert の音素抽出から生成し、spec_lengthsと同じサイズにそろえる
+    z_p_hubert = self.hubert.units(y).transpose(1, 2)
+    z_p = F.interpolate(z_p_hubert, size=(spec.size(2)), mode='linear', align_corners=False)
+
+    # z_p から z へ音色変換する tのHzはspec_lengthsと同じ
+    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_vs(z_p, spec_lengths, g=g)
 
     z_slice, ids_slice = commons.rand_slice_segments(z, spec_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
 
     # VC cycle
-    # target_sids = self.make_random_target_sids(target_ids, sid)
-    # target_g = self.emb_g(target_sids).unsqueeze(-1)
-    # vc_spec = commons.slice_segments(spec, ids_slice, self.segment_size)
-    # vc_spec_length = torch.full_like(ids_slice, fill_value=self.segment_size)
-    # vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(vc_spec, vc_spec_length, g=g)
-    # vc_z_p = self.enc_vc(vc_z, vc_y_mask, g=g)
-    # vc_z_hat = self.enc_vc(vc_z_p, vc_y_mask, g=target_g, reverse=True)
-    # vc_o_hat = self.dec(vc_z_hat * vc_y_mask, g=target_g)
-    # with torch.no_grad():
-    #   vc_spec_r = spectrogram_torch_data(vc_o_hat.squeeze(1), self.hps_data)
-    #   vc_spec_r_hat = torch.squeeze(vc_spec_r, 0)
-    #   vc_z_r, vc_mr_q, vc_logsr_q, vc_y_r_mask = self.enc_q(vc_spec_r_hat, vc_spec_length, g=target_g)
-    #   vc_z_r_p = self.enc_vc(vc_z_r, vc_y_r_mask, g=target_g)
-    #   vc_z_r_hat = self.enc_vc(vc_z_r_p, vc_y_r_mask, g=g, reverse=True)
-    #   vc_o_r_hat = self.dec(vc_z_r_hat * vc_y_r_mask, g=g)
-    vc_o_r_hat = o
+    target_sids = self.make_random_target_sids(target_ids, sid)
+    target_g = self.emb_g(target_sids).unsqueeze(-1)
+    vc_y = commons.slice_segments(y, ids_slice, self.segment_size * self.hps_data.hop_length) # slice 
+    vc_y_lengths = torch.full_like(ids_slice, fill_value=self.segment_size * self.hps_data.hop_length)
+    vc_spec = commons.slice_segments(spec, ids_slice, self.segment_size)
+    vc_spec_lengths = torch.full_like(ids_slice, fill_value=self.segment_size)
+
+    vc_z_p_hubert = self.hubert.units(vc_y).transpose(1, 2)
+    vc_z_p = F.interpolate(vc_z_p_hubert, size=(vc_spec.size(2)), mode='linear', align_corners=False)
+    vc_vs_z, vc_vs_m_q, vc_vs_logs_q, vc_vs_mask = self.enc_vs(vc_z_p, vc_spec_lengths, g=g)
+    vc_o_hat = self.dec(vc_vs_z * vc_vs_mask, g=target_g)
+    with torch.no_grad():
+      vc_z_r_p_hubert = self.hubert.units(vc_o_hat).transpose(1, 2)
+      vc_z_r_p = F.interpolate(vc_z_r_p_hubert, size=(vc_spec.size(2)), mode='linear', align_corners=False)
+      vc_vs_z_r, vc_vs_m_r_q, vc_vs_logs_r_q, vc_vs_r_mask = self.enc_vs(vc_z_r_p, vc_spec_lengths, g=g)
+      vc_o_r_hat = self.dec(vc_vs_z_r * vc_vs_r_mask, g=target_g)
 
     return o, ids_slice, spec_mask, (z, m_q, logs_q), z_p, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat
 
@@ -500,15 +503,25 @@ class SynthesizerTrn(nn.Module):
         target_sids[i] = source_id
     return target_sids
 
-  def voice_conversion(self, y, y_lengths, sid_src, sid_tgt):
+  def voice_conversion(self, y, y_lengths, spec, spec_lengths, sid_src, sid_tgt):
     assert self.n_speakers > 0, "n_speakers have to be larger than 0."
     g_src = self.emb_g(sid_src).unsqueeze(-1)
     g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
-    z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src)
-    z_p = self.flow(z, y_mask, g=g_src)
-    z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
-    o_hat = self.dec(z_hat * y_mask, g=g_tgt)
-    return o_hat, y_mask, (z, z_p, z_hat)
+    z_p_hubert = self.hubert.units(y).transpose(1, 2)
+    z_p = F.interpolate(z_p_hubert, size=(spec.size(2)), mode='linear', align_corners=False)
+    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_vs(z_p, spec_lengths, g=g_src)
+    o_hat = self.dec(vs_z * vs_mask, g=g_tgt)
+    return o_hat, (z_p, vs_z)
+
+  # def voice_conversion(self, y, y_lengths, sid_src, sid_tgt):
+  #   assert self.n_speakers > 0, "n_speakers have to be larger than 0."
+  #   g_src = self.emb_g(sid_src).unsqueeze(-1)
+  #   g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
+  #   z, m_q, logs_q, y_mask = self.enc_q(y, y_lengths, g=g_src)
+  #   z_p = self.flow(z, y_mask, g=g_src)
+  #   z_hat = self.flow(z_p, y_mask, g=g_tgt, reverse=True)
+  #   o_hat = self.dec(z_hat * y_mask, g=g_tgt)
+  #   return o_hat, y_mask, (z, z_p, z_hat)
 
   def voice_ra_pa_db(self, y, y_lengths, sid_src, sid_tgt):
     assert self.n_speakers > 0, "n_speakers have to be larger than 0."

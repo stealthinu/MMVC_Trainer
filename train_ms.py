@@ -184,13 +184,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
   train_loader.batch_sampler.set_epoch(epoch)
   global global_step
-
-  net_g.train()
-  net_d.train()
-
   spec_segment_size = hps.train.segment_size // hps.data.hop_length
   target_ids = torch.tensor(train_loader.dataset.get_all_sid())
 
+  net_g.train()
+  net_d.train()
   for batch_idx, (x, x_lengths, spec, spec_lengths, y, y_lengths, speakers) in enumerate(tqdm(train_loader, desc="Epoch {}".format(epoch))):
     x, x_lengths = x.cuda(rank, non_blocking=True), x_lengths.cuda(rank, non_blocking=True)
     spec, spec_lengths = spec.cuda(rank, non_blocking=True), spec_lengths.cuda(rank, non_blocking=True)
@@ -221,12 +219,11 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     # Generator
     with autocast(enabled=hps.train.fp16_run):
       y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
-
     loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-    dispose_length = y_mel.size(2) // 4
+    dispose_length = y_mel.size(2) // 4 # loss_vcは精度を上げるためmelを真ん中の半分だけ使う
     disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
     disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
-    loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel # melを真ん中の半分だけ使うようにする
+    loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
     loss_fm = feature_loss(fmap_r, fmap_g)
     loss_gen, losses_gen = generator_loss(y_d_hat_g)
     loss_z = F.l1_loss(z, vs_z) * 1.0
@@ -300,11 +297,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
 
  
 def evaluate(hps, generator, eval_loader, writer_eval, logger):
+    scalar_dict = {}
+    scalar_dict.update({"loss/g/mel": 0.0, "loss/g/vc": 0.0, "loss/g/z": 0.0})
     spec_segment_size = hps.train.segment_size // hps.data.hop_length
     target_ids = torch.tensor(eval_loader.dataset.get_all_sid())
-
-    scalar_dict = {}
-    scalar_dict.update({"loss/g/mel": 0.0, "loss/g/vc": 0.0})
 
     with torch.no_grad():
       #evalのデータセットを一周する
@@ -317,8 +313,8 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
         if hps.model.use_mel_train:
             spec = mel
         for i in range(hps.train.backup.mean_of_num_eval):
+          #Generator
           with autocast(enabled=hps.train.fp16_run):
-            #Generator
             y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_p, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = generator(y, y_lengths, spec, spec_lengths, speakers, target_ids)
           y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
           y_hat = y_hat.float()
@@ -335,12 +331,14 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
 
           scalar_dict["loss/g/mel"] += loss_mel
           scalar_dict["loss/g/vc"] += loss_vc
+          scalar_dict["loss/g/z"] += loss_z
       
     #lossをepoch1周の結果をiter単位の平均値に
     iter_num = (batch_num + 1) * hps.train.backup.mean_of_num_eval
     scalar_dict["loss/g/mel"] /= iter_num
     scalar_dict["loss/g/vc"] /= iter_num
-    logger.info(f"loss/g/mel : {scalar_dict['loss/g/mel']} loss/g/vc : {scalar_dict['loss/g/vc']}")
+    scalar_dict["loss/g/z"] /= iter_num
+    logger.info(f"loss/g/mel : {scalar_dict['loss/g/mel']} loss/g/vc : {scalar_dict['loss/g/vc']} loss/g/z : {scalar_dict['loss/g/z']}")
 
     utils.summarize(
       writer=writer_eval,
