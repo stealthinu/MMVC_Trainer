@@ -35,7 +35,8 @@ from models import (
 from losses import (
   generator_loss,
   discriminator_loss,
-  feature_loss
+  feature_loss,
+  kl_loss
 )
 from mel_processing import mel_spectrogram_torch_data, spec_to_mel_torch_data
 from text.symbols import symbols
@@ -222,11 +223,12 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
     dispose_length = y_mel.size(2) // 4 # loss_vcは精度を上げるためmelを真ん中の半分だけ使う
     disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
+    #loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+    loss_z = kl_loss(m_q, logs_q, vs_m_q, vs_logs_q, z_mask) * hps.train.c_kl
     disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
     loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
     loss_fm = feature_loss(fmap_r, fmap_g)
     loss_gen, losses_gen = generator_loss(y_d_hat_g)
-    loss_z = F.l1_loss(z, vs_z) * 1.0
     loss_gen_all = loss_gen + loss_fm + loss_mel + loss_z + loss_vc
 
     optim_g.zero_grad()
