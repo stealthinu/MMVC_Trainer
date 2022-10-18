@@ -221,10 +221,10 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     with autocast(enabled=hps.train.fp16_run):
       y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
     loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-    dispose_length = y_mel.size(2) // 4 # loss_vcは精度を上げるためmelを真ん中の半分だけ使う
-    disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
     #loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
     loss_z = kl_loss(m_q, logs_q, vs_m_q, vs_logs_q, z_mask) * hps.train.c_kl
+    dispose_length = y_mel.size(2) // 4 # loss_vcは精度を上げるためmelを真ん中の半分だけ使う
+    disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
     disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
     loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
     loss_fm = feature_loss(fmap_r, fmap_g)
