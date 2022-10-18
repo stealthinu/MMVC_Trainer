@@ -243,7 +243,7 @@ class PosteriorEncoder(nn.Module):
     return z, m, logs, x_mask
 
 
-class PhonemesEncoder(nn.Module):
+class BasicEncoder(nn.Module):
   def __init__(self,
       in_channels,
       out_channels,
@@ -251,7 +251,6 @@ class PhonemesEncoder(nn.Module):
       kernel_size,
       dilation_rate,
       n_layers,
-      n_flows=4,
       gin_channels=0):
     super().__init__()
     self.in_channels = in_channels
@@ -260,20 +259,18 @@ class PhonemesEncoder(nn.Module):
     self.kernel_size = kernel_size
     self.dilation_rate = dilation_rate
     self.n_layers = n_layers
-    self.n_flows = n_flows
     self.gin_channels = gin_channels
 
-    self.flows = nn.ModuleList()
-    for i in range(n_flows):
-      self.flows.append(modules.ResidualCouplingLayer(in_channels, hidden_channels, kernel_size, dilation_rate, n_layers, gin_channels=gin_channels, mean_only=True))
-      self.flows.append(modules.Flip())
+    self.pre = nn.Conv1d(in_channels, hidden_channels, 1)
+    self.enc = modules.WN(hidden_channels, kernel_size, dilation_rate, n_layers, gin_channels=gin_channels)
     self.proj = nn.Conv1d(hidden_channels, out_channels, 1)
 
-  def forward(self, x, x_mask, g=None):
-    for flow in self.flows:
-      x, _ = flow(x, x_mask, g=g)
-    self.proj(x) * x_mask
-    return x
+  def forward(self, x, x_lengths, g=None):
+    x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
+    x = self.pre(x) * x_mask
+    x = self.enc(x, x_mask, g=g)
+    z = self.proj(x) * x_mask
+    return z, x_mask
 
 
 class Generator(torch.nn.Module):
@@ -482,8 +479,8 @@ class SynthesizerTrn(nn.Module):
     #self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
     self.hubert = hubert
     # hubert -> z hubertは256channel flow4相当は16layer
-    self.enc_vs = PosteriorEncoder(hubert_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
-    self.enc_p = PhonemesEncoder(inter_channels, hubert_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
+    self.enc_hs = BasicEncoder(inter_channels, hubert_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
+    self.dec_hs = PosteriorEncoder(hubert_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
     
     if n_speakers > 1:
       self.emb_g = nn.Embedding(n_speakers, gin_channels)
@@ -496,14 +493,14 @@ class SynthesizerTrn(nn.Module):
 
     z, m_q, logs_q, spec_mask = self.enc_q(spec, spec_lengths, g=g)
 
-    # z_p を hubert の音素抽出から生成し、spec_lengthsと同じサイズにそろえる
-    z_p_hubert = self.hubert.units(y).transpose(1, 2)
-    z_p_hb = F.interpolate(z_p_hubert, size=(spec.size(2)), mode='linear', align_corners=False)
-    # z_p から z へ音色変換する tのHzはspec_lengthsと同じ
-    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_vs(z_p_hb, spec_lengths, g=g)
+    # z から z_p_hs を生成する
+    z_p_hs, hs_mask = self.enc_hs(z, spec_lengths, g=g)
 
-    # PhonemesEncoder からも z_p を生成する
-    z_p_ep = self.enc_p(z, spec_lengths, g=g)
+    # z_hs をhubertの音素抽出で生成し、spec_lengthsと同じサイズにそろえる
+    z_hs = self.hubert.units(y).transpose(1, 2)
+    z_hs = F.interpolate(z_hs, size=(spec.size(2)), mode='linear', align_corners=False)
+    # z_hs から z へ音色変換する tのHzはspec_lengthsと同じ
+    vs_z, vs_m_q, vs_logs_q, vs_mask = self.dec_hs(z_hs, spec_lengths, g=g)
 
     z_slice, ids_slice = commons.rand_slice_segments(z, spec_lengths, self.segment_size)
     o = self.dec(z_slice, g=g)
@@ -516,19 +513,19 @@ class SynthesizerTrn(nn.Module):
     vc_spec = commons.slice_segments(spec, ids_slice, self.segment_size)
     vc_spec_lengths = torch.full_like(ids_slice, fill_value=self.segment_size)
 
-    vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(vc_spec, vc_spec_length, g=g)
-    vc_z_p = self.enc_p(vc_z, vc_y_mask, g=g)
-    vc_vs_z, vc_vs_m_q, vc_vs_logs_q, vc_vs_mask = self.enc_vs(vc_z_p, vc_spec_lengths, g=g)
+    vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(vc_spec, vc_spec_lengths, g=g)
+    vc_z_p, vc_hc_mask = self.enc_hs(vc_z, vc_spec_lengths, g=g)
+    vc_vs_z, vc_vs_m_q, vc_vs_logs_q, vc_vs_mask = self.dec_hs(vc_z_p, vc_spec_lengths, g=g)
     vc_o_hat = self.dec(vc_vs_z * vc_vs_mask, g=target_g)
     with torch.no_grad():
       vc_spec_r = spectrogram_torch_data(vc_o_hat.squeeze(1), self.hps_data)
       vc_spec_r_hat = torch.squeeze(vc_spec_r, 0)
-      vc_z_r, vc_mr_q, vc_logsr_q, vc_y_r_mask = self.enc_q(vc_spec_r_hat, vc_spec_length, g=target_g)
-      vc_z_r_p = self.enc_p(vc_z_r, vc_y_mask, g=g)
-      vc_vs_z_r, vc_vs_m_r_q, vc_vs_logs_r_q, vc_vs_r_mask = self.enc_vs(vc_z_r_p, vc_spec_lengths, g=g)
+      vc_z_r, vc_mr_q, vc_logsr_q, vc_y_r_mask = self.enc_q(vc_spec_r_hat, vc_spec_lengths, g=target_g)
+      vc_z_r_p, vc_hc_r_mask = self.enc_hs(vc_z_r, vc_spec_lengths, g=g)
+      vc_vs_z_r, vc_vs_m_r_q, vc_vs_logs_r_q, vc_vs_r_mask = self.dec_hs(vc_z_r_p, vc_spec_lengths, g=g)
       vc_o_r_hat = self.dec(vc_vs_z_r * vc_vs_r_mask, g=target_g)
 
-    return o, ids_slice, spec_mask, (z, m_q, logs_q), z_p_hb, z_p_ep, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat
+    return o, ids_slice, spec_mask, (z, m_q, logs_q), z_hs, z_p_hs, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat
 
   def make_random_target_sids(self, target_ids, sid):
     # target_sids は target_ids をランダムで埋める
@@ -549,7 +546,7 @@ class SynthesizerTrn(nn.Module):
     g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
     z_p_hubert = self.hubert.units(y).transpose(1, 2)
     z_p = F.interpolate(z_p_hubert, size=(spec.size(2)), mode='linear', align_corners=False)
-    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_vs(z_p, spec_lengths, g=g_src)
+    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_hs(z_p, spec_lengths, g=g_src)
     o_hat = self.dec(vs_z * vs_mask, g=g_tgt)
     return o_hat, (z_p, vs_z)
 
