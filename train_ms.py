@@ -198,7 +198,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     if hps.model.use_mel_train:
         spec = mel
     with autocast(enabled=hps.train.fp16_run):
-      y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_p, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = net_g(y, y_lengths, spec, spec_lengths, speakers, target_ids)
+      y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_p_hb, z_p_ep, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = \
+        net_g(y, y_lengths, spec, spec_lengths, speakers, target_ids)
     y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
     y_hat = y_hat.float()
     y_hat_mel = mel_spectrogram_torch_data(y_hat.squeeze(1), hps.data)
@@ -227,7 +228,8 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     loss_fm = feature_loss(fmap_r, fmap_g)
     loss_gen, losses_gen = generator_loss(y_d_hat_g)
     loss_z = F.l1_loss(z, vs_z) * 1.0
-    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_z + loss_vc
+    loss_zp = F.l1_loss(z_p_hb, z_p_ep) * 1.0
+    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_z + loss_zp + loss_vc
 
     optim_g.zero_grad()
     scaler.scale(loss_gen_all).backward()
@@ -315,7 +317,8 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
         for i in range(hps.train.backup.mean_of_num_eval):
           #Generator
           with autocast(enabled=hps.train.fp16_run):
-            y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_p, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = generator(y, y_lengths, spec, spec_lengths, speakers, target_ids)
+            y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_p_hb, z_p_ep, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = \
+              generator(y, y_lengths, spec, spec_lengths, speakers, target_ids)
           y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
           y_hat = y_hat.float()
           y_hat_mel = mel_spectrogram_torch_data(y_hat.squeeze(1), hps.data)
@@ -328,10 +331,11 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
           disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
           loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
           loss_z = F.l1_loss(z, vs_z) * 1.0
+          loss_zp = F.l1_loss(z_p_hb, z_p_ep) * 1.0
 
           scalar_dict["loss/g/mel"] += loss_mel
           scalar_dict["loss/g/vc"] += loss_vc
-          scalar_dict["loss/g/z"] += loss_z
+          scalar_dict["loss/g/z"] += loss_z + loss_zp
       
     #lossをepoch1周の結果をiter単位の平均値に
     iter_num = (batch_num + 1) * hps.train.backup.mean_of_num_eval
