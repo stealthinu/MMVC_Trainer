@@ -219,7 +219,8 @@ class PosteriorEncoder(nn.Module):
       kernel_size,
       dilation_rate,
       n_layers,
-      gin_channels=0):
+      gin_channels=0,
+      requires_grad=True):
     super().__init__()
     self.in_channels = in_channels
     self.out_channels = out_channels
@@ -232,6 +233,11 @@ class PosteriorEncoder(nn.Module):
     self.pre = nn.Conv1d(in_channels, hidden_channels, 1)
     self.enc = modules.WN(hidden_channels, kernel_size, dilation_rate, n_layers, gin_channels=gin_channels)
     self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
+
+    if requires_grad == False:
+      for param in self.parameters():
+        param.requires_grad = False
+
 
   def forward(self, x, x_lengths, g=None):
     x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(x.dtype)
@@ -274,7 +280,7 @@ class BasicEncoder(nn.Module):
 
 
 class Generator(torch.nn.Module):
-    def __init__(self, initial_channel, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=0):
+    def __init__(self, initial_channel, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=0, requires_grad=True):
         super(Generator, self).__init__()
         self.num_kernels = len(resblock_kernel_sizes)
         self.num_upsamples = len(upsample_rates)
@@ -299,6 +305,11 @@ class Generator(torch.nn.Module):
         if gin_channels != 0:
             #self.cond = nn.Conv1d(gin_channels, upsample_initial_channel, 1)
             gin_channels = 0
+
+        if requires_grad == False:
+          for param in self.parameters():
+            param.requires_grad = False
+
 
     def forward(self, x, g=None):
         x = self.conv_pre(x)
@@ -474,8 +485,8 @@ class SynthesizerTrn(nn.Module):
     self.use_sdp = use_sdp
     self.hps_data = hps_data
 
-    self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels)
-    self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels)
+    self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels, requires_grad=False)
+    self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels, requires_grad=False)
     #self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
     self.hubert = hubert
     # hubert -> z hubertは256channel flow4相当は16layer
