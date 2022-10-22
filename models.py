@@ -555,11 +555,11 @@ class SynthesizerTrn(nn.Module):
     assert self.n_speakers > 0, "n_speakers have to be larger than 0."
     g_src = self.emb_g(sid_src).unsqueeze(-1)
     g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
-    z_p_hubert = self.hubert.units(y).transpose(1, 2)
-    z_p = F.interpolate(z_p_hubert, size=(spec.size(2)), mode='linear', align_corners=False)
-    vs_z, vs_m_q, vs_logs_q, vs_mask = self.enc_hs(z_p, spec_lengths, g=g_src)
+    z_hs = self.hubert.units(y).transpose(1, 2)
+    z_hs = F.interpolate(z_hs, size=(spec.size(2)), mode='linear', align_corners=False)
+    vs_z, vs_m_q, vs_logs_q, vs_mask = self.dec_hs(z_hs, spec_lengths, g=g_tgt)
     o_hat = self.dec(vs_z * vs_mask, g=g_tgt)
-    return o_hat, (z_p, vs_z)
+    return o_hat, (z_hs, vs_z)
 
   # def voice_conversion(self, y, y_lengths, sid_src, sid_tgt):
   #   assert self.n_speakers > 0, "n_speakers have to be larger than 0."
