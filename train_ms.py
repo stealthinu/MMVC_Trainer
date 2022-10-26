@@ -169,7 +169,7 @@ def run(rank, n_gpus, hps):
   if hps.load_synthesizer != None:
     logger.info(f"Load synthesizer model : {hps.load_synthesizer}")
     net_g.module.load_synthesizer(os.path.join(hps.load_synthesizer))
-  #net_g.module.save_synthesizer(os.path.join(hps.model_dir, "synthesizer.pth"))
+
   for epoch in range(epoch_str, sys.maxsize):
     if rank==0:
       train_and_evaluate(rank, epoch, hps, [net_g, net_d], [optim_g, optim_d], [scheduler_g, scheduler_d], scaler, [train_loader, eval_loader], logger, [writer, writer_eval])
@@ -203,8 +203,7 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     if hps.model.use_mel_train:
         spec = mel
     with autocast(enabled=hps.train.fp16_run):
-      y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_hs, z_p_hs, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = \
-        net_g(y, y_lengths, spec, spec_lengths, speakers, target_ids)
+      y_hat, ids_slice, z_mask, (z, z_p, m_q, logs_q), vc_o_r_hat = net_g(spec, spec_lengths, speakers, target_ids)
     y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
     y_hat = y_hat.float()
     y_hat_mel = mel_spectrogram_torch_data(y_hat.squeeze(1), hps.data)
@@ -225,17 +224,15 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
     # Generator
     with autocast(enabled=hps.train.fp16_run):
       y_d_hat_r, y_d_hat_g, fmap_r, fmap_g = net_d(y, y_hat)
+
     loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
-    #loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
-    loss_vs = kl_loss(m_q, logs_q, vs_m_q, vs_logs_q, z_mask) * hps.train.c_kl
-    loss_hs = F.l1_loss(z_hs, z_p_hs) * 1.0
-    dispose_length = y_mel.size(2) // 4 # loss_vcは精度を上げるためmelを真ん中の半分だけ使う
+    dispose_length = y_mel.size(2) // 4
     disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
     disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
-    loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
+    loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel # melを真ん中の半分だけ使うようにする
     loss_fm = feature_loss(fmap_r, fmap_g)
     loss_gen, losses_gen = generator_loss(y_d_hat_g)
-    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_vs + loss_hs + loss_vc
+    loss_gen_all = loss_gen + loss_fm + loss_mel + loss_vc
 
     optim_g.zero_grad()
     scaler.scale(loss_gen_all).backward()
@@ -321,10 +318,9 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
         if hps.model.use_mel_train:
             spec = mel
         for i in range(hps.train.backup.mean_of_num_eval):
-          #Generator
           with autocast(enabled=hps.train.fp16_run):
-            y_hat, ids_slice, z_mask, (z, m_q, logs_q), z_hs, z_p_hs, (vs_z, vs_m_q, vs_logs_q), vc_o_r_hat = \
-              generator(y, y_lengths, spec, spec_lengths, speakers, target_ids)
+            #Generator
+            y_hat, ids_slice, z_mask, (z, z_p, m_q, logs_q), vc_o_r_hat = generator(spec, spec_lengths, speakers, target_ids)
           y_mel = commons.slice_segments(mel, ids_slice, spec_segment_size)
           y_hat = y_hat.float()
           y_hat_mel = mel_spectrogram_torch_data(y_hat.squeeze(1), hps.data)
@@ -336,19 +332,15 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
           disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
           disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
           loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
-          loss_vs = F.l1_loss(z, vs_z) * 1.0
-          loss_hs = F.l1_loss(z_hs, z_p_hs) * 1.0
 
           scalar_dict["loss/g/mel"] += loss_mel
           scalar_dict["loss/g/vc"] += loss_vc
-          scalar_dict["loss/g/z"] += loss_vs + loss_hs
       
     #lossをepoch1周の結果をiter単位の平均値に
     iter_num = (batch_num + 1) * hps.train.backup.mean_of_num_eval
     scalar_dict["loss/g/mel"] /= iter_num
     scalar_dict["loss/g/vc"] /= iter_num
-    scalar_dict["loss/g/z"] /= iter_num
-    logger.info(f"loss/g/mel : {scalar_dict['loss/g/mel']} loss/g/vc : {scalar_dict['loss/g/vc']} loss/g/z : {scalar_dict['loss/g/z']}")
+    logger.info(f"loss/g/mel : {scalar_dict['loss/g/mel']} loss/g/vc : {scalar_dict['loss/g/vc']}")
 
     utils.summarize(
       writer=writer_eval,
