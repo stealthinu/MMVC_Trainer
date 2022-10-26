@@ -249,6 +249,16 @@ def get_hparams(init=True):
   hparams.model_dir = model_dir
   hparams.best_log_path = best_log_path
   hparams.best_loss_mel = best_loss_mel
+
+  # set spec_channels
+  if not hasattr(hparams.model, "use_mel_train"):
+    hparams.model.use_mel_train = False
+
+  if hparams.model.use_mel_train:
+      hparams.data.spec_channels = hparams.data.n_mel_channels
+  else:
+      hparams.data.spec_channels = hparams.data.filter_length // 2 + 1
+
   return hparams
 
 
