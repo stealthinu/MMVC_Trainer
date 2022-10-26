@@ -116,18 +116,14 @@ def run(rank, n_gpus, hps):
       shuffle=True)
     eval_loader = DataLoader(eval_dataset, num_workers=cpu_count, shuffle=False, pin_memory=True,
         collate_fn=collate_fn, batch_sampler=eval_sampler)
-  if hps.model.use_mel_train:
-      channels = hps.data.n_mel_channels
-  else:
-      channels = hps.data.filter_length // 2 + 1
-  hubert = torch.hub.load("bshall/hubert:main", "hubert_soft").cuda(rank)
+
   net_g = SynthesizerTrn(
       len(symbols),
-      channels,
+      hps.data.spec_channels,
       hps.train.segment_size // hps.data.hop_length,
       n_speakers=hps.data.n_speakers,
       hps_data=hps.data,
-      hubert=hubert,
+      synthesizer_requires_grad=False,
       **hps.model).cuda(rank)
   net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).cuda(rank)
   optim_g = torch.optim.AdamW(
