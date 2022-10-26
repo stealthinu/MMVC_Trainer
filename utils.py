@@ -81,7 +81,7 @@ def save_vc_sample(hps, loader, collate, generator, name):
   for target_id in target_ids:
     with torch.no_grad():
       sid_tgt = torch.LongTensor([target_id]).cuda(0)
-      audio = generator.module.voice_conversion(y, y_lengths, spec, spec_lengths, sid_src=sid_src, sid_tgt=sid_tgt)[0][0,0].data.cpu().float().numpy()
+      audio = generator.module.voice_conversion(spec, spec_lengths, sid_src=sid_src, sid_tgt=sid_tgt)[0][0,0].data.cpu().float().numpy()
 
     audio = audio * hps.data.max_wav_value
     wav = audio.astype(np.int16).tobytes()
