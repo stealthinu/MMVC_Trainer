@@ -461,6 +461,7 @@ class SynthesizerTrn(nn.Module):
     use_sdp=True,
     hps_data=None,
     hubert=None,
+    synthesizer_requires_grad=True,
     **kwargs):
 
     super().__init__()
@@ -484,9 +485,10 @@ class SynthesizerTrn(nn.Module):
     self.hubert_channels = hubert_channels
     self.use_sdp = use_sdp
     self.hps_data = hps_data
+    self.synthesizer_requires_grad = synthesizer_requires_grad
 
-    self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels, requires_grad=False)
-    self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels, requires_grad=False)
+    self.dec = Generator(inter_channels, resblock, resblock_kernel_sizes, resblock_dilation_sizes, upsample_rates, upsample_initial_channel, upsample_kernel_sizes, gin_channels=gin_channels, requires_grad=synthesizer_requires_grad)
+    self.enc_q = PosteriorEncoder(spec_channels, inter_channels, hidden_channels, 5, 1, 16, gin_channels=gin_channels, requires_grad=synthesizer_requires_grad)
     #self.flow = ResidualCouplingBlock(inter_channels, hidden_channels, 5, 1, 4, n_flows=n_flow, gin_channels=gin_channels)
     self.hubert = hubert
     # hubert -> z hubertは256channel flow4相当は16layer
@@ -525,14 +527,14 @@ class SynthesizerTrn(nn.Module):
     vc_spec_lengths = torch.full_like(ids_slice, fill_value=self.segment_size)
 
     vc_z, vc_m_q, vc_logs_q, vc_y_mask = self.enc_q(vc_spec, vc_spec_lengths, g=g)
-    vc_z_p, vc_hc_mask = self.enc_hs(vc_z, vc_spec_lengths, g=g)
+    vc_z_p, vc_hs_mask = self.enc_hs(vc_z, vc_spec_lengths, g=g)
     vc_vs_z, vc_vs_m_q, vc_vs_logs_q, vc_vs_mask = self.dec_hs(vc_z_p, vc_spec_lengths, g=g)
     vc_o_hat = self.dec(vc_vs_z * vc_vs_mask, g=target_g)
     with torch.no_grad():
       vc_spec_r = spectrogram_torch_data(vc_o_hat.squeeze(1), self.hps_data)
       vc_spec_r_hat = torch.squeeze(vc_spec_r, 0)
       vc_z_r, vc_mr_q, vc_logsr_q, vc_y_r_mask = self.enc_q(vc_spec_r_hat, vc_spec_lengths, g=target_g)
-      vc_z_r_p, vc_hc_r_mask = self.enc_hs(vc_z_r, vc_spec_lengths, g=g)
+      vc_z_r_p, vc_hs_r_mask = self.enc_hs(vc_z_r, vc_spec_lengths, g=g)
       vc_vs_z_r, vc_vs_m_r_q, vc_vs_logs_r_q, vc_vs_r_mask = self.dec_hs(vc_z_r_p, vc_spec_lengths, g=g)
       vc_o_r_hat = self.dec(vc_vs_z_r * vc_vs_r_mask, g=target_g)
 
@@ -555,11 +557,13 @@ class SynthesizerTrn(nn.Module):
     assert self.n_speakers > 0, "n_speakers have to be larger than 0."
     g_src = self.emb_g(sid_src).unsqueeze(-1)
     g_tgt = self.emb_g(sid_tgt).unsqueeze(-1)
-    z_hs = self.hubert.units(y).transpose(1, 2)
-    z_hs = F.interpolate(z_hs, size=(spec.size(2)), mode='linear', align_corners=False)
-    vs_z, vs_m_q, vs_logs_q, vs_mask = self.dec_hs(z_hs, spec_lengths, g=g_tgt)
+    # z_hs = self.hubert.units(y).transpose(1, 2)
+    # z_hs = F.interpolate(z_hs, size=(spec.size(2)), mode='linear', align_corners=False)
+    z, m_q, logs_q, y_mask = self.enc_q(spec, spec_lengths, g=g_src)
+    z_p, hs_mask = self.enc_hs(z, spec_lengths, g=g_src)
+    vs_z, vs_m_q, vs_logs_q, vs_mask = self.dec_hs(z_p, spec_lengths, g=g_tgt)
     o_hat = self.dec(vs_z * vs_mask, g=g_tgt)
-    return o_hat, (z_hs, vs_z)
+    return o_hat, (z_p, vs_z)
 
   # def voice_conversion(self, y, y_lengths, sid_src, sid_tgt):
   #   assert self.n_speakers > 0, "n_speakers have to be larger than 0."

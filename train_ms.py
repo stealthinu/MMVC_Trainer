@@ -116,18 +116,15 @@ def run(rank, n_gpus, hps):
       shuffle=True)
     eval_loader = DataLoader(eval_dataset, num_workers=cpu_count, shuffle=False, pin_memory=True,
         collate_fn=collate_fn, batch_sampler=eval_sampler)
-  if hps.model.use_mel_train:
-      channels = hps.data.n_mel_channels
-  else:
-      channels = hps.data.filter_length // 2 + 1
   hubert = torch.hub.load("bshall/hubert:main", "hubert_soft").cuda(rank)
   net_g = SynthesizerTrn(
       len(symbols),
-      channels,
+      hps.data.spec_channels,
       hps.train.segment_size // hps.data.hop_length,
       n_speakers=hps.data.n_speakers,
       hps_data=hps.data,
       hubert=hubert,
+      synthesizer_requires_grad=False,
       **hps.model).cuda(rank)
   net_d = MultiPeriodDiscriminator(hps.model.use_spectral_norm).cuda(rank)
   optim_g = torch.optim.AdamW(
@@ -169,7 +166,7 @@ def run(rank, n_gpus, hps):
   if hps.load_synthesizer != None:
     logger.info(f"Load synthesizer model : {hps.load_synthesizer}")
     net_g.module.load_synthesizer(os.path.join(hps.load_synthesizer))
-  #net_g.module.save_synthesizer(os.path.join(hps.model_dir, "synthesizer.pth"))
+
   for epoch in range(epoch_str, sys.maxsize):
     if rank==0:
       train_and_evaluate(rank, epoch, hps, [net_g, net_d], [optim_g, optim_d], [scheduler_g, scheduler_d], scaler, [train_loader, eval_loader], logger, [writer, writer_eval])
@@ -332,12 +329,13 @@ def evaluate(hps, generator, eval_loader, writer_eval, logger):
           batch_num = batch_idx
 
           loss_mel = F.l1_loss(y_mel, y_hat_mel) * hps.train.c_mel
+          #loss_kl = kl_loss(z_p, logs_q, m_p, logs_p, z_mask) * hps.train.c_kl
+          loss_vs = kl_loss(m_q, logs_q, vs_m_q, vs_logs_q, z_mask) * hps.train.c_kl
+          loss_hs = F.l1_loss(z_hs, z_p_hs) * 1.0
           dispose_length = y_mel.size(2) // 4 # loss_vcは精度を上げるためmelを真ん中の半分だけ使う
           disposed_y_mel = y_mel[:, :, dispose_length:-dispose_length]
           disposed_vc_o_r_hat_mel = vc_o_r_hat_mel[:, :, dispose_length:-dispose_length]
           loss_vc = F.l1_loss(disposed_y_mel, disposed_vc_o_r_hat_mel) * hps.train.c_mel
-          loss_vs = F.l1_loss(z, vs_z) * 1.0
-          loss_hs = F.l1_loss(z_hs, z_p_hs) * 1.0
 
           scalar_dict["loss/g/mel"] += loss_mel
           scalar_dict["loss/g/vc"] += loss_vc
