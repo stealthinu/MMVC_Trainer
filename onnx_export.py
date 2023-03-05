@@ -157,8 +157,8 @@ def main(args):
     filenames = os.path.splitext(os.path.basename(args.convert_pth))
     onnx_file = os.path.join(dirname, filenames[0] + ".onnx")
     dummy_specs = torch.rand(1, 257, 64)
-    dummy_f0 = torch.rand(1, 1, 64)
     dummy_lengths = torch.LongTensor([64])
+    dummy_f0 = torch.rand(1, 1, 64)
     dummy_sid_src = torch.LongTensor([0])
     dummy_sid_tgt = torch.LongTensor([1])
 
@@ -174,24 +174,24 @@ def main(args):
         (dummy_specs, dummy_lengths, dummy_f0, dummy_sid_src, dummy_sid_tgt),
         onnx_file,
         do_constant_folding=False,
-        opset_version=13,
-        #opset_version=17,
+        #opset_version=13,
+        opset_version=17,
         verbose=False,
         #input_names=["specs", "lengths", "sin", "d", "sid_src", "sid_tgt"],
         input_names=["specs", "lengths", "f0", "sid_src", "sid_tgt"],
         output_names=["audio"],
         dynamic_axes={
-            "specs": {2: "length"},
-            "f0": {2: "length"}
+            "specs": {2: "specs_length"},
+            #"f0": {2: "f0_length"},
             #"sin": {2: "length"},
             #"d0": {2: "length"},
             #"d1": {2: "length"},
             #"d2": {2: "length"},
-            #"d3": {2: "length"}
+            #"d3": {2: "length"},
         })
-    model_onnx2 = onnx.load(onnx_file)
-    model_simp, check = simplify(model_onnx2)
-    onnx.save(model_simp, onnx_file)
+    #model_onnx2 = onnx.load(onnx_file)
+    #model_simp, check = simplify(model_onnx2)
+    #onnx.save(model_simp, onnx_file)
     print("Done\n")
 
     print("vits onnx benchmark")

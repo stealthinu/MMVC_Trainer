@@ -356,7 +356,8 @@ class SynthesizerTrn(nn.Module):
       self.emb_g.requires_grad = requires_grad_emb_g
 
   def forward(self, x, x_lengths, y, y_lengths, f0, slice_id, sid=None, target_ids=None):
-    sin, d = self.make_sin_d(f0, y)
+    with torch.no_grad():
+      sin, d = self.make_sin_d(f0, y)
 
     x, m_p, logs_p, x_mask = self.enc_p(x, x_lengths)
     #target sid 作成
@@ -414,6 +415,7 @@ class SynthesizerTrn(nn.Module):
     dense_factors = torch.tensor(dense_factors).to(device)
     upsample_scales = torch.tensor(upsample_scales).to(device)
     prod_upsample_scales = torch.cumprod(upsample_scales, dim=0)
+    #prod_upsample_scales = torch.tensor([  8,  32,  64, 128]).to(device)
     #dfs_batch = [[] for _ in range(len(dense_factors))]
     dfs_batch = []
     for df, us in zip(dense_factors, prod_upsample_scales):
