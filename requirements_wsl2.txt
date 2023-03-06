@@ -13,6 +13,8 @@ Unidecode==1.1.1
 retry
 tqdm
 resampy==0.2.2
+# Temp fix: Tensorboard error Ref: https://github.com/apache/airflow/issues/19804
+Markdown==3.3.4
 
 # Specific package for WSL2
 psutil
